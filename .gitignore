@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.env
+.venv/
+env/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Orka local data
+.orka/
+
+# Environment files
+.env.local
+.env.production
+
+# Checkpoint artifacts (optional: comment out to exclude from version control)
+# docs/checkpoints/
+
+# detect-secrets baseline
+.secrets.baseline
+

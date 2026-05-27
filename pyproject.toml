@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orka-tools"
+version = "0.1.0"
+description = "AI-Powered Semantic Code Surgery – AST-aware refactoring with LLM backends"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [{name = "Orka Team"}]
+readme = "README.md"
+
+dependencies = [
+    "typer>=0.9",
+    "rich>=13.0",
+    "python-dotenv>=1.0",
+    "networkx>=3.0",
+    "chromadb>=0.4",
+    "libcst>=1.1",
+    "together>=1.1",
+    "langchain-openai>=0.1",
+    "langchain-core>=0.2",
+]
+
+[project.scripts]
+orka = "orka.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+gemini = [
+    "langchain-google-genai>=2.0",
+]
+anthropic = [
+    "langchain-anthropic>=0.2",
+]
+
+[tool.setuptools.packages.find]
+include = ["orka*"]
+exclude = ["orka.tests*"]   # do not package tests
