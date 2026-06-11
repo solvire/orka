@@ -35,3 +35,5 @@ Thumbs.db
 # detect-secrets baseline
 .secrets.baseline
 
+.aider*
+.orka_*

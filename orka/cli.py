@@ -3,9 +3,12 @@ Orka CLI — AI-Powered Semantic Code Surgery.
 
 Usage:
     ./orka --help
+    ./orka init
+    ./orka init --continue-dev --provider together_ai
     ./orka scan
     ./orka inspect --id "File:path/to/file.py"
     ./orka extract --file src.py --cls MyClass --dest dst.py
+    ./orka refactor --file src.py --method my_method --req "new logic"
     ./orka refactor --file src.py --cls MyClass --method my_method --req "new logic"
 """
 
@@ -14,7 +17,9 @@ import logging
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import typer
 from rich.console import Console
@@ -24,6 +29,7 @@ from orka.orchestrator import Orchestrator
 from orka.core.ingester import OrkaGraphDB
 from orka.surgery.transplanter import transplant_class
 from orka.core.cascade import cascade_import_updates
+from orka.core.init_helper import run_init, show_init_notice, save_status
 
 # ---------------------------------------------------------------------------
 # Globals
@@ -58,6 +64,13 @@ def _is_scan_running() -> bool:
         return False
 
 
+def _emit_json(data: dict) -> None:
+    """Print *data* as a single line of JSON to stdout."""
+    import json as json_mod
+    sys.stdout.write(json_mod.dumps(data, default=str) + "\n")
+    sys.stdout.flush()
+
+
 def _bg_scan() -> None:
     """Kick off a background scan if AUTO_SCAN_AFTER_MUTATION is enabled."""
     if not settings.AUTO_SCAN_AFTER_MUTATION:
@@ -88,10 +101,40 @@ def _bg_scan() -> None:
 # ---------------------------------------------------------------------------
 
 @app.command()
+def init(
+    continue_dev: bool = typer.Option(False, "--continue-dev", help="Target Continue.dev"),
+    cursor: bool = typer.Option(False, "--cursor", help="Target Cursor"),
+    claude_code: bool = typer.Option(False, "--claude-code", help="Target Claude Code"),
+    provider: Optional[str] = typer.Option(
+        None, "--provider", help="Default LLM provider",
+    ),
+    force: bool = typer.Option(False, "--force", help="Re-write rules even if already set"),
+) -> None:
+    """Configure Orka for your AI coding tool of choice."""
+    # Map flags to editor string
+    editor = None
+    if continue_dev:
+        editor = "continue-dev"
+    elif cursor:
+        editor = "cursor"
+    elif claude_code:
+        editor = "claude-code"
+
+    success = run_init(editor=editor, provider=provider, force=force)
+    if not success:
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def scan() -> None:
     """Scan the codebase, build the dependency graph and ChromaDB vectors."""
+    show_init_notice(console, "scan")
     console.print("[bold green]Waking up Orka Brain...[/bold green]")
     Orchestrator(workspace_dir)
+
+    # Update last_scan timestamp in status
+    save_status({"last_scan": datetime.now(timezone.utc).isoformat()})
+
     # Clean up lock file if this was a background scan
     try:
         if os.path.exists(_SCAN_LOCK_FILE):
@@ -104,6 +147,7 @@ def scan() -> None:
 @app.command()
 def inspect(node_id: str = typer.Option(..., "--id", help="Graph Node ID")) -> None:
     """Inspect a graph node and its connections."""
+    show_init_notice(console, f'inspect --id "{node_id}"')
     graph_db = OrkaGraphDB(cache_file=os.path.join(workspace_dir, ".orka_cache.json"))
 
     if not graph_db.graph.has_node(node_id):
@@ -145,6 +189,7 @@ def extract(
     dest: str = typer.Option(..., "--dest", help="Destination file path (relative to project root)"),
 ) -> None:
     """Extract a class from one file into a new file, auto-healing imports."""
+    show_init_notice(console, f'extract --file {file} --cls {cls} --dest {dest}')
     abs_source = os.path.join(workspace_dir, file)
     abs_dest = os.path.join(workspace_dir, dest)
 
@@ -172,36 +217,97 @@ def extract(
 @app.command()
 def refactor(
     file: str = typer.Option(..., "--file", help="File path (relative to project root)"),
-    cls: str = typer.Option(..., "--cls", help="Class name containing the method"),
-    method: str = typer.Option(..., "--method", help="Method name to refactor"),
+    cls: Optional[str] = typer.Option(None, "--cls", help="Class name containing the method (omit for standalone functions)"),
+    func: Optional[str] = typer.Option(None, "--func", help="Alias for --cls when refactoring a standalone function (mutually exclusive with --cls)"),
+    method: str = typer.Option(..., "--method", help="Method or function name to refactor"),
     req: str = typer.Option(..., "--req", help="Business requirements for the new logic"),
+    json_output: bool = typer.Option(False, "--json", help="Output structured JSON instead of human-readable text"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview changes without modifying the file (implies --json)"),
     provider: str = typer.Option(
         settings.DEFAULT_PROVIDER,
         "--provider",
         help="LLM provider: openai, deepseek, together_ai, gemini, anthropic, openai_compat",
     ),
 ) -> None:
-    """Surgically refactor a method's body using AI."""
+    """Surgically refactor a method's body using AI.
+
+    For class methods:  orka refactor --file app.py --cls MyClass --method my_method --req "..."
+    For standalone:     orka refactor --file app.py --method my_function --req "..."
+    or:                 orka refactor --file app.py --func my_function --method my_function --req "..."
+    """
+    # --func is an alias for --cls; use whichever is provided (error if both)
+    if cls and func:
+        if json_output:
+            _emit_json({"success": False, "error": "--cls and --func are mutually exclusive."})
+        else:
+            console.print("[bold red]--cls and --func are mutually exclusive.[/bold red]")
+        raise typer.Exit(code=1)
+    target_cls = cls or func
+
+    if target_cls:
+        display_label = f"{target_cls}.{method}"
+    else:
+        display_label = method
+
+    show_init_notice(console, f'refactor --file {file} --method {method} --req "{req[:50]}..."')
     abs_file = os.path.join(workspace_dir, file)
 
     if not os.path.exists(abs_file):
-        console.print(f"[bold red]File not found: {abs_file}[/bold red]")
+        msg = f"File not found: {abs_file}"
+        if json_output:
+            _emit_json({"success": False, "label": display_label, "file": abs_file, "error": msg})
+        else:
+            console.print(f"[bold red]{msg}[/bold red]")
         raise typer.Exit(code=1)
+
+    # --dry-run implies --json so the IDE/LLM can parse the preview
+    use_json = json_output or dry_run
 
     orchestrator = Orchestrator(workspace_dir, provider=provider)
-    success = orchestrator.refactor_method(abs_file, cls, method, req)
+    result = orchestrator.refactor_method(
+        file_path=abs_file,
+        method_name=method,
+        requirements=req,
+        class_name=target_cls,
+        dry_run=dry_run,
+    )
 
-    if success:
-        console.print(
-            f"[bold green]Successfully refactored {cls}.{method}() in {file}.[/bold green]"
-        )
+    if result.success:
+        if use_json:
+            _emit_json({
+                "success": True,
+                "label": result.label,
+                "file": result.file_path,
+                "diff": result.diff,
+                "dry_run": result.dry_run,
+            })
+        else:
+            if dry_run:
+                console.print(
+                    f"[bold yellow]Dry-run for {display_label}() in {file}:[/bold yellow]"
+                )
+                console.print(result.diff)
+            else:
+                console.print(
+                    f"[bold green]Successfully refactored {display_label}() in {file}.[/bold green]"
+                )
     else:
-        console.print(
-            f"[bold red]Failed to refactor {cls}.{method}() in {file}.[/bold red]"
-        )
+        if use_json:
+            _emit_json({
+                "success": False,
+                "label": result.label,
+                "file": result.file_path,
+                "error": result.error,
+                "dry_run": result.dry_run,
+            })
+        else:
+            console.print(
+                f"[bold red]Failed to refactor {display_label}() in {file}.[/bold red]"
+            )
         raise typer.Exit(code=1)
 
-    _bg_scan()
+    if not dry_run:
+        _bg_scan()
 
 
 # ---------------------------------------------------------------------------
@@ -210,3 +316,4 @@ def refactor(
 
 if __name__ == "__main__":
     app()
+

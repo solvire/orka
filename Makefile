@@ -1,6 +1,6 @@
 .PHONY: help install install-dev install-all test test-cov lint clean
 
-VENV   = .venv
+VENV   = env
 PYTHON = $(VENV)/bin/python
 PIP    = $(VENV)/bin/pip
 
@@ -14,7 +14,7 @@ help: ## Show this help
 # ------------------------------------------------------------------
 
 $(VENV)/bin/python:  ## Create virtual environment if missing
-	python3 -m venv $(VENV)
+	python3 -m env $(VENV)
 	$(PIP) install --upgrade pip setuptools wheel
 
 install: $(VENV)/bin/python  ## Install package in editable mode

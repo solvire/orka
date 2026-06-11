@@ -1,0 +1,45 @@
+---
+description: Orka CLI — AI-powered semantic code surgery (refactor, extract, scan, inspect)
+globs: *.py
+---
+
+# Orka — AI-Powered Semantic Code Surgery
+
+Orka is installed as an **editable pip package** in this project's virtual environment.
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `orka scan` | Scan the codebase, build dependency graph + vector embeddings |
+| `orka inspect --id <node>` | Inspect a graph node and its connections |
+| `orka extract --file <path> --cls <Class> --dest <path>` | Extract a class into a new file; auto-heal imports |
+| `orka refactor --file <path> --cls <Class> --method <method> --req "<req>" [--provider <provider>]` | Surgically refactor a method body using AI |
+
+## Quick Start
+
+```bash
+# Scan the codebase first
+orka scan
+
+# Refactor a method
+orka refactor --file src/app.py --cls MyService --method handle_order --req "add validation"
+
+# Extract a class
+orka extract --file src/utils.py --cls OldClass --dest src/models/old_class.py
+
+# Inspect dependencies
+orka inspect --id "Class:myproject.models.User"
+```
+
+## Supported Providers
+
+OpenAI, DeepSeek, Together AI, Gemini, Anthropic, OpenRouter, Groq — set via `.env`.
+
+## Architecture
+
+- **OrkaGraphDB** — NetworkX dependency graph of all files, classes, methods, imports
+- **OrkaVectorDB** — ChromaDB semantic search over source code
+- **MethodBodyReplacer** — LibCST-based surgical patching (preserves signatures, decorators)
+- **TransplantTransformer** — Class extraction with auto-import-healing
+- **ImportCascadeTransformer** — Auto-updates imports across all dependent files

@@ -1,6 +1,9 @@
+"""Surgical method body replacement using LibCST."""
+
 import textwrap
 import libcst as cst
 from typing import Optional
+
 
 class MethodBodyReplacer(cst.CSTTransformer):
     """
@@ -39,22 +42,35 @@ class MethodBodyReplacer(cst.CSTTransformer):
             return updated_node.with_changes(body=self.new_body_node)
         return updated_node
 
+
 def apply_llm_patch(file_path: str, target_method: str, new_logic: str, target_class: Optional[str] = None) -> bool:
     """
     Reads a file, surgically replaces a method's body, and writes it back.
     Returns True if successful, False if the target was not found.
+    """
+    result = preview_patch(file_path, target_method, new_logic, target_class)
+    if result is None:
+        return False
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(result)
+    return True
+
+
+def preview_patch(file_path: str, target_method: str, new_logic: str, target_class: Optional[str] = None) -> Optional[str]:
+    """
+    Simulate a surgical patch **in memory** and return the full patched source.
+
+    Works like ``apply_llm_patch`` but never touches the file on disk.
+    Returns the full patched source code as a string, or ``None`` if the
+    target method/function was not found.
     """
     with open(file_path, "r", encoding="utf-8") as f:
         source_code = f.read()
 
     tree = cst.parse_module(source_code)
     transformer = MethodBodyReplacer(target_method=target_method, new_body_source=new_logic, target_class=target_class)
-    
     modified_tree = tree.visit(transformer)
 
     if transformer.modification_successful:
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(modified_tree.code)
-        return True
-    
-    return False
+        return modified_tree.code
+    return None

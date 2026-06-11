@@ -35,15 +35,18 @@ def test_full_orchestrator_pipeline(orka_workspace):
     target_file = str(orka_workspace / "orders.py")
 
     # 2. Trigger Refactor
-    success = orchestrator.refactor_method(
+    result = orchestrator.refactor_method(
         file_path=target_file,
         class_name="OrderController",
         method_name="process_order",
         requirements="Update to use select_for_update() and execute the order."
     )
 
-    assert success is True
-
+    assert result.success is True, f"Refactor failed: {result.error}"
+    assert result.label == "OrderController.process_order"
+    assert result.file_path == target_file
+    # A non-trivial diff means the file was actually changed
+    assert len(result.diff) > 0, "Expected a non-empty diff"
     # 3. Verify the final file state
     modified_code = (orka_workspace / "orders.py").read_text(encoding="utf-8")
     

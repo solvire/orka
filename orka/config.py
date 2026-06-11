@@ -99,7 +99,7 @@ _load_env(_PROJECT_ROOT)
 DEFAULT_MODELS: dict[str, str] = {
     "openai": "gpt-4o",
     "deepseek": "deepseek-chat",
-    "together_ai": "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
+    "together_ai": "MiniMaxAI/MiniMax-M2.7",
     "gemini": "gemini-2.0-flash",
     "anthropic": "claude-sonnet-4-20250514",
     "openai_compat": "gpt-4o",  # catch-all for any OpenAI-compatible endpoint
