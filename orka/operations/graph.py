@@ -19,10 +19,12 @@ Pipeline
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Optional
 
 from langgraph.graph import END, StateGraph
 
+from orka.config import settings
 from orka.operations.controllers import context, generator, validator, fixer
 from orka.operations.state import SurgeryState
 
@@ -195,10 +197,25 @@ def run_surgery(
     dict
         The final :class:`SurgeryState` with results.
     """
-    from orka.config import settings
-
     actual_provider = provider or settings.DEFAULT_PROVIDER
-    actual_target = target_output_file or source_file
+
+    # Default target: for test generation, create alongside source in tests/
+    if target_output_file:
+        actual_target = target_output_file
+    elif prompt_template_name == "test":
+        # Infer test file path from source
+        src_path = Path(source_file)
+        # If source is e.g. orka/core/validator.py, target is orka/tests/test_validator.py
+        parts = src_path.parts
+        try:
+            src_idx = parts.index("orka")
+            test_parts = ("orka", "tests") + parts[src_idx + 1:]
+            test_name = f"test_{test_parts[-1]}"
+            actual_target = str(Path(*test_parts[:-1], test_name))
+        except ValueError:
+            actual_target = source_file
+    else:
+        actual_target = source_file
 
     target_node_id = f"{class_name}.{method_name}" if class_name else method_name
 
@@ -235,3 +252,4 @@ def run_surgery(
     graph = build_surgery_graph()
     result = graph.invoke(initial_state)
     return result
+

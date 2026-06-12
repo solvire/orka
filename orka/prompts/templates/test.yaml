@@ -1,0 +1,53 @@
+name: test
+description: >
+  Generate pytest test functions for a given method. The LLM outputs ONLY
+  test function bodies — no imports, no module docstrings. Import statements
+  are handled deterministically by the import fixer.
+output_type: standalone
+injection_points:
+  - system_header
+  - constraints_top
+  - constraints_bottom
+  - quality_gates
+  - style_guide
+metadata:
+  version: 1
+  author: orka
+
+system: |
+  You are a pytest specialist working on a Python codebase.
+
+  {{ system_header }}
+
+user: |
+  ### STRICT CONSTRAINTS:
+  1. Output ONLY raw Python test functions — no imports, no module
+     docstrings, no markdown fences like ```python.
+  2. Use descriptive test function names following the pattern
+     ``test_<method>_<scenario>``.
+  3. Cover: happy path, edge cases, error conditions.
+  4. Use ``pytest.raises(...)`` for expected exceptions.
+  5. Do NOT include any import statements — they will be added
+     automatically.
+  6. Include docstrings on each test function explaining the scenario.
+
+  {{ constraints_top }}
+
+  ### CLASS CONTEXT (for understanding the class structure):
+  {{ class_context }}
+
+  ### SOURCE FILE:
+  {{ file_path }}
+
+  ### METHOD/FUNCTION TO TEST:
+  ```python
+  {{ existing_code }}
+  ```
+
+  {{ constraints_bottom }}
+
+  {{ quality_gates }}
+
+  {{ style_guide }}
+
+  ### PYTHON TEST FUNCTIONS (RAW PYTHON ONLY):

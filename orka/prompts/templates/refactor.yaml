@@ -1,0 +1,49 @@
+name: refactor
+description: >
+  Replace the body of an existing method with new logic. The LLM receives
+  the existing method signature, class context, and any graph constraints,
+  and outputs ONLY the new body logic (no signature, no decorators).
+output_type: body
+injection_points:
+  - system_header
+  - constraints_top
+  - constraints_bottom
+  - quality_gates
+metadata:
+  version: 1
+  author: orka
+
+system: |
+  You are an elite Python backend architect working on Orka CLI.
+  Your task is to write ONLY the internal body logic for a specific method.
+
+  {{ system_header }}
+
+user: |
+  ### STRICT CONSTRAINTS:
+  1. DO NOT output the method signature (`def function_name(...):`).
+  2. DO NOT output decorators.
+  3. DO NOT wrap the output in markdown code blocks like ```python.
+  4. Return ONLY valid Python code at the base indentation level (0 spaces).
+
+  {{ constraints_top }}
+
+  ### GRAPH DEPENDENCY CONSTRAINTS (DO NOT BREAK THESE):
+  {{ graph_constraints }}
+
+  ### CLASS CONTEXT:
+  {{ class_context }}
+
+  ### EXISTING METHOD SIGNATURE & CODE:
+  ```python
+  {{ existing_code }}
+  ```
+
+  ### NEW BUSINESS REQUIREMENTS:
+  {{ business_requirements }}
+
+  {{ constraints_bottom }}
+
+  {{ quality_gates }}
+
+  ### SYNTHESIZED BODY LOGIC (RAW PYTHON ONLY):

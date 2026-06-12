@@ -1,0 +1,10 @@
+---
+name: use_pytest_raises
+description: Use pytest.raises() for expected exceptions in test functions.
+injection_point: constraints_bottom
+applies_to: ["test"]
+priority: 30
+---
+
+- Use `pytest.raises(...)` for expected exceptions rather than try/except blocks or `pytest.fail()`.
+

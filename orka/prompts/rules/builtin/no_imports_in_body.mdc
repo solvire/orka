@@ -1,0 +1,10 @@
+---
+name: no_imports_in_body
+description: Do NOT include import statements in generated code — they are added separately.
+injection_point: constraints_top
+applies_to: ["*"]
+priority: 10
+---
+
+- Do NOT include any `import` or `from ... import` statements in the generated code. Imports will be added separately by the framework.
+

@@ -1,0 +1,10 @@
+---
+name: test_behavior_not_mocks
+description: Test observable behavior via the public API. Avoid mocking internals.
+injection_point: quality_gates
+applies_to: ["test"]
+priority: 30
+---
+
+- Test observable behavior via the public API. Avoid mocking internal methods — prefer dependency injection or real implementations where possible.
+

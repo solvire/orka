@@ -26,13 +26,15 @@ import typer
 from rich.console import Console
 
 from orka.config import settings
-from orka.orchestrator import Orchestrator
 from orka.core.ingester import OrkaGraphDB
 from orka.surgery.transplanter import transplant_class
 from orka.core.cascade import cascade_import_updates
 from orka.core.init_helper import run_init, show_init_notice, save_status, is_initialized, load_status
 
-# Prompt compiler engine (Phase 2 — Strangler Fig pattern)
+# Surgery graph pipeline
+from orka.operations.graph import run_surgery
+
+# Prompt compiler engine
 from orka.core.compiler import PromptCompiler
 from orka.core.templates import PromptTemplate, InjectionPoint
 from orka.core.rule_resolver import resolve_rules, BUILTIN_RULES_DIR, PROJECT_RULES_DIRNAME
@@ -136,7 +138,8 @@ def scan() -> None:
     """Scan the codebase, build the dependency graph and ChromaDB vectors."""
     show_init_notice(console, "scan")
     console.print("[bold green]Waking up Orka Brain...[/bold green]")
-    Orchestrator(workspace_dir)
+    graph = OrkaGraphDB(cache_file=os.path.join(workspace_dir, ".orka_cache.json"))
+    graph.scan_directory(workspace_dir)
 
     # Update last_scan timestamp in status
     save_status({"last_scan": datetime.now(timezone.utc).isoformat()})
@@ -269,51 +272,45 @@ def refactor(
     # --dry-run implies --json so the IDE/LLM can parse the preview
     use_json = json_output or dry_run
 
-    orchestrator = Orchestrator(workspace_dir, provider=provider)
-    result = orchestrator.refactor_method(
-        file_path=abs_file,
+    # ── Surgery graph pipeline ────────────────────────────────────────
+    result = run_surgery(
+        source_file=abs_file,
         method_name=method,
         requirements=req,
+        prompt_template_name="refactor",
         class_name=target_cls,
         dry_run=dry_run,
+        provider=provider,
     )
 
-    if result.success:
+    if result.get("is_valid", False):
         if use_json:
             _emit_json({
                 "success": True,
-                "label": result.label,
-                "file": result.file_path,
-                "diff": result.diff,
-                "dry_run": result.dry_run,
-            })
-        else:
-            if dry_run:
-                console.print(
-                    f"[bold yellow]Dry-run for {display_label}() in {file}:[/bold yellow]"
-                )
-                console.print(result.diff)
-            else:
-                console.print(
-                    f"[bold green]Successfully refactored {display_label}() in {file}.[/bold green]"
-                )
-    else:
-        if use_json:
-            _emit_json({
-                "success": False,
-                "label": result.label,
-                "file": result.file_path,
-                "error": result.error,
-                "dry_run": result.dry_run,
+                "label": display_label,
+                "file": result.get("target_output_file", abs_file),
+                "dry_run": dry_run,
             })
         else:
             console.print(
-                f"[bold red]Failed to refactor {display_label}() in {file}.[/bold red]"
+                f"[bold green]Successfully refactored {display_label}() in {file} "
+                f"({result.get('iteration_count', 1)} iterations).[/bold green]"
+            )
+    else:
+        error = result.get("fatal_error") or result.get("validation_output", "Unknown error")
+        if use_json:
+            _emit_json({
+                "success": False,
+                "label": display_label,
+                "file": abs_file,
+                "error": error,
+                "dry_run": dry_run,
+            })
+        else:
+            console.print(
+                f"[bold red]Failed to refactor {display_label}(): {error}[/bold red]"
             )
         raise typer.Exit(code=1)
-
-    if not dry_run:
-        _bg_scan()
 
 
 # ---------------------------------------------------------------------------
@@ -382,18 +379,19 @@ def testgen(
     output: Optional[str] = typer.Option(None, "--output", help="Output file path (relative to project root)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview generated tests without writing to disk"),
     run: bool = typer.Option(False, "--run", help="Run pytest after generating tests"),
+    count: int = typer.Option(1, "--n", help="Generate N tests (loop pipeline --n times, appending)"),
     json_output: bool = typer.Option(False, "--json", help="Output structured JSON"),
     provider: str = typer.Option(
         settings.DEFAULT_PROVIDER,
         "--provider",
         help="LLM provider",
     ),
-    rule: list[str] = typer.Option([], "--rule", help="Rule name(s) to inject (repeatable)"),
 ) -> None:
     """Generate pytest tests for a method or function using AI.
 
-    Uses the Prompt Compiler Engine to build a test-generation prompt,
-    invokes the LLM, validates output, and writes the result.
+    Uses the surgery graph pipeline to generate, validate and write tests.
+    With ``--n``, runs the pipeline in a loop: each iteration generates one
+    test function and appends it to the output file.
 
     Examples::
 
@@ -403,6 +401,9 @@ def testgen(
         # Write to a test file
         orka testgen --file app.py --cls OrderController --method process \\
             --output tests/test_processor.py
+
+        # Generate 3 test functions in a loop
+        orka testgen --file app.py --method calculate --n 3 --output test_calc.py
 
         # Generate and run tests
         orka testgen --file app.py --method calculate --output test_calc.py --run
@@ -427,46 +428,93 @@ def testgen(
             console.print(f"[bold red]{msg}[/bold red]")
         raise typer.Exit(code=1)
 
-    orchestrator = Orchestrator(workspace_dir, provider=provider)
-    result = orchestrator.generate_tests(
-        file_path=abs_file,
-        method_name=method,
-        class_name=target_cls,
-        output_path=output,
-        dry_run=dry_run,
-        run_pytest=run,
-    )
+    abs_output = os.path.join(workspace_dir, output) if output else None
 
-    if result.success:
-        if json_output or dry_run:
-            _emit_json({
-                "success": True,
-                "label": result.label,
-                "file": result.file_path,
-                "tests_content": result.tests_content,
-                "diff": result.diff,
-                "dry_run": result.dry_run,
-            })
+    # Set test_file_target when --run is used so pytest runs against it
+    test_file_target = abs_output if run else None
+
+    all_tests: list[str] = []
+    success_count = 0
+
+    for i in range(count):
+        if count > 1:
+            console.print(f"[dim]Iteration {i+1}/{count} — generating test...[/dim]")
+
+        result = run_surgery(
+            source_file=abs_file,
+            method_name=method,
+            requirements=(
+                f"Generate a single pytest test function for {display_target}. "
+                f"Test behavior, not implementation. This is iteration {i+1} of {count}."
+            ),
+            prompt_template_name="test",
+            class_name=target_cls,
+            target_output_file=abs_output,
+            test_file_target=test_file_target,
+            dry_run=dry_run,
+            provider=provider,
+        )
+
+        if result.get("is_valid", False):
+            draft = result.get("draft_file_content", "")
+            # Extract just the test function body (strip import header)
+            lines = draft.splitlines()
+            test_lines = [
+                l for l in lines
+                if not l.startswith("import ") and not l.startswith("from ")
+            ]
+            test_body = "\n".join(test_lines).strip()
+            if test_body:
+                all_tests.append(test_body)
+                success_count += 1
+
+            if output and not dry_run and success_count > 1:
+                # Append subsequent tests to the existing file
+                with open(abs_output, "a", encoding="utf-8") as f:
+                    f.write(f"\n\n{test_body}\n")
         else:
-            if output:
-                console.print(
-                    f"[bold green]Tests written to {output} for {display_target}.[/bold green]"
-                )
-            else:
-                # No output path — print tests to stdout
-                console.print(result.tests_content)
-    else:
+            if not dry_run:
+                err = result.get("validation_output", "unknown error")
+                console.print(f"  [yellow]Iteration {i+1} failed: {err[:80]}[/yellow]")
+
+    if count > 1 and not output:
+        # No output path — concatenate all generated tests to stdout
+        combined = "\n\n".join(all_tests)
         if json_output:
             _emit_json({
-                "success": False,
-                "label": result.label,
-                "error": result.error,
+                "success": success_count > 0,
+                "label": display_target,
+                "tests_content": combined,
+                "dry_run": dry_run,
+                "generated": success_count,
+                "attempted": count,
             })
         else:
-            console.print(
-                f"[bold red]Failed to generate tests for {display_target}: {result.error}[/bold red]"
-            )
-        raise typer.Exit(code=1)
+            console.print(combined)
+        return
+
+    if json_output or dry_run:
+        combined = "\n\n".join(all_tests) if count > 1 else result.get("draft_file_content", "")
+        _emit_json({
+            "success": success_count > 0,
+            "label": display_target,
+            "file": result.get("target_output_file", abs_file) if count == 1 else abs_output,
+            "tests_content": combined,
+            "dry_run": dry_run,
+            "generated": success_count,
+            "attempted": count,
+        })
+    elif output:
+        msg = (
+            f"[bold green]All {count} tests written to {output} for {display_target}.[/bold green]"
+            if success_count == count else
+            f"[bold yellow]Generated {success_count}/{count} tests for {display_target} "
+            f"in {output} ({count - success_count} failed).[/bold yellow]"
+        )
+        console.print(msg)
+    else:
+        combined = "\n\n".join(all_tests)
+        console.print(combined)
 
 
 # ---------------------------------------------------------------------------
@@ -559,9 +607,6 @@ def doctor(
     json_output: bool = typer.Option(False, "--json", help="Output structured JSON"),
 ) -> None:
     """Diagnose Orka configuration and project health."""
-    from orka.config import settings
-    from orka.core.init_helper import is_initialized, load_status
-
     if json_output:
         report = {
             "initialized": is_initialized(),

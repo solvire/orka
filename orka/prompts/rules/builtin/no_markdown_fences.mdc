@@ -1,0 +1,10 @@
+---
+name: no_markdown_fences
+description: Output raw Python only — never wrap in markdown code blocks.
+injection_point: constraints_top
+applies_to: ["*"]
+priority: 20
+---
+
+- Return ONLY raw Python code. Do NOT wrap the output in markdown code blocks like ```python or any other fence.
+
