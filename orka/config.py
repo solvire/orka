@@ -3,6 +3,7 @@ Standalone configuration loader for the Orka CLI.
 
 Loads .env from the current working directory (where ``orka`` is invoked),
 or from the file specified by the ``ORKA_ENV_FILE`` environment variable.
+or from a directory specified by ``ORKA_PROJECT_ROOT``.
 
 Design
 ------
@@ -18,6 +19,7 @@ API keys use standard environment variable names (``OPENAI_API_KEY``,
 """
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -31,24 +33,58 @@ from dotenv import load_dotenv
 
 def _resolve_project_root() -> Path:
     """
-    Resolve the project root as the current working directory.
+    Resolve the project root.
+
+    Resolution order:
+        1. ``ORKA_PROJECT_ROOT`` env var (explicit directory)
+        2. ``ORKA_ENV_FILE`` env var (directory containing that file)
+        3. Current working directory (``Path.cwd()``)
     """
+    explicit = os.getenv("ORKA_PROJECT_ROOT")
+    if explicit:
+        return Path(explicit).resolve(strict=True)
+
+    env_file = os.getenv("ORKA_ENV_FILE")
+    if env_file:
+        return Path(env_file).resolve().parent
+
     return Path.cwd()
 
 
 def _load_env(project_root: Path) -> None:
     """
-    Load .env from the current working directory, or from ORKA_ENV_FILE.
+    Load .env from the project root, or from ORKA_ENV_FILE.
 
     This lets the user keep a project-local .env (automatic) or specify a
     central env file for cross-project API keys.
+
+    Raises
+    ------
+    SystemExit
+        If no ``.env`` file exists.
     """
     env_file = os.getenv("ORKA_ENV_FILE")
     if env_file:
-        load_dotenv(env_file, override=False)
-    else:
-        dotenv_path = project_root / ".env"
-        load_dotenv(dotenv_path, override=False)
+        env_path = Path(env_file).resolve()
+        if not env_path.is_file():
+            print(
+                f"[orka.config] FATAL: ORKA_ENV_FILE={env_file} is not a file or does not exist.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        load_dotenv(env_path, override=False)
+        return
+
+    dotenv_path = project_root / ".env"
+    if not dotenv_path.is_file():
+        print(
+            f"[orka.config] FATAL: No .env file found at {dotenv_path}. "
+            "Create a .env file or set ORKA_PROJECT_ROOT / ORKA_ENV_FILE.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    load_dotenv(dotenv_path, override=False)
 
 
 def _str_env(key: str, default: str = "") -> str:
@@ -91,11 +127,37 @@ _load_env(_PROJECT_ROOT)
 
 
 # ===================================================================
+# Validation — fail early on missing critical config
+# ===================================================================
+
+_REQUIRED_VARS = [
+    # At least ONE API key must be present (depending on provider)
+    ("OPENAI_API_KEY", "OpenAI"),
+    ("DEEPSEEK_API_KEY", "DeepSeek"),
+    ("TOGETHER_API_KEY", "Together AI"),
+    ("GEMINI_API_KEY", "Gemini"),
+    ("ANTHROPIC_API_KEY", "Anthropic"),
+    ("OPENROUTER_API_KEY", "OpenRouter"),
+    ("GROQ_API_KEY", "Groq"),
+    ("API_KEY", "Generic OpenAI-compatible"),
+]
+
+_configured_providers = [
+    label for var, label in _REQUIRED_VARS if os.getenv(var)
+]
+
+if not _configured_providers:
+    print(
+        "[orka.config] WARNING: No API keys found in environment. "
+        "Set at least one (e.g. DEEPSEEK_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY).",
+        file=sys.stderr,
+    )
+
+# ===================================================================
 # Provider registry
 # ===================================================================
 
 # Supported providers and their default model names.
-# Each entry:  short_name -> (default_model, is_openai_compatible)
 DEFAULT_MODELS: dict[str, str] = {
     "openai": "gpt-4o",
     "deepseek": "deepseek-chat",
@@ -271,6 +333,40 @@ class Settings:
         }
         return base_map.get(prov, self.API_BASE)
 
+    # -- Diagnostics -------------------------------------------------
+
+    def report(self) -> str:
+        """Return a human-readable summary of all loaded settings."""
+        lines = [
+            "Orka Configuration Report",
+            "=" * 50,
+            f"  Project root : {self.PROJECT_ROOT}",
+            f"  .env file    : {self.PROJECT_ROOT / '.env'}",
+            "",
+            "  API Keys found:",
+        ]
+        for var, label in _REQUIRED_VARS:
+            val = getattr(self, var, "")
+            if val:
+                lines.append(f"    ✓ {label} ({var})")
+            else:
+                lines.append(f"    ✗ {label} ({var}) — not set")
+        lines.extend([
+            "",
+            f"  Default provider : {self.DEFAULT_PROVIDER}",
+            f"  Smart model      : {self.smart_model}",
+            f"  Fast model       : {self.fast_model}",
+            f"  Edit model       : {self.edit_model}",
+            f"  Temperature      : {self.TEMPERATURE}",
+            f"  Timeout (s)      : {self.TIMEOUT}",
+            f"  Max retries      : {self.MAX_RETRIES}",
+            f"  Verify SSL       : {self.VERIFY_SSL}",
+            f"  Auto-scan        : {self.AUTO_SCAN_AFTER_MUTATION}",
+            f"  Dry run          : {self.DRY_RUN}",
+            f"  Verbose          : {self.VERBOSE}",
+        ])
+        return "\n".join(lines)
+
     # ----------------------------------------------------------------
 
     def __repr__(self) -> str:
@@ -284,3 +380,4 @@ class Settings:
 
 # Module-level singleton so consumers can do:  from orka.config import settings
 settings = Settings()
+

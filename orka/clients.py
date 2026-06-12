@@ -173,16 +173,42 @@ class OrkaClientFactory:
 
     @classmethod
     def _resolve_model(cls, provider: str, tier: str) -> str:
-        """Resolve model name for *provider* and *tier*."""
-        if tier == "smart":
-            return settings.smart_model
-        if tier == "fast":
-            return settings.fast_model
-        if tier == "edit":
-            return settings.edit_model
-        # Unknown tier — fall back to smart
-        logger.warning("Unknown model_tier %r, falling back to smart", tier)
-        return settings.smart_model
+        """Resolve model name for *provider* and *tier*.
+
+        Resolution order (first match wins):
+        1. Provider-specific model override (``DEEPSEEK_MODEL``, etc.)
+        2. Orka tier env vars (``ORKA_SMART_MODEL``, etc.)
+        3. Default from :data:`DEFAULT_MODELS` registry for this provider
+        """
+        # 1. Provider-specific model override (DEEPSEEK_MODEL, TOGETHER_MODEL, etc.)
+        provider_var_map: dict[str, str] = {
+            "openai": settings.OPENAI_MODEL,
+            "deepseek": settings.DEEPSEEK_MODEL,
+            "together_ai": settings.TOGETHER_MODEL,
+            "gemini": settings.GEMINI_MODEL,
+            "anthropic": settings.ANTHROPIC_MODEL,
+        }
+        provider_override = provider_var_map.get(provider, "")
+        if provider_override:
+            return provider_override
+
+        # 2. Orka tier env vars (ORKA_SMART_MODEL, etc.)
+        #    Only apply when the provider matches the default provider.
+        #    Otherwise we'd leak e.g. ORKA_SMART_MODEL=deepseek-v4-pro to Together.
+        tier_key = tier.upper()
+        orka_var = getattr(settings, f"ORKA_{tier_key}_MODEL", "")
+        if orka_var and provider == settings.DEFAULT_PROVIDER:
+            return orka_var
+
+        # 3. Default from registry for this specific provider
+        from orka.config import DEFAULT_MODELS
+        provider_default = DEFAULT_MODELS.get(provider, "")
+        if provider_default:
+            return provider_default
+
+        # Ultimate fallback
+        logger.warning("No model found for provider %r, tier %r — using gpt-4o", provider, tier)
+        return "gpt-4o"
 
     # -- provider factories ------------------------------------------
 
@@ -233,6 +259,10 @@ class OrkaClientFactory:
 
         base_url = settings.get_api_base(provider) or None
 
+        model_kwargs: dict = {}
+        if not verify_ssl:
+            model_kwargs["verify"] = False
+
         return ChatOpenAI(
             model=model,
             api_key=api_key,
@@ -240,7 +270,7 @@ class OrkaClientFactory:
             temperature=temperature,
             max_retries=max_retries,
             timeout=timeout,
-            verify_ssl=verify_ssl,
+            model_kwargs=model_kwargs if model_kwargs else {},
         )
 
     @classmethod
