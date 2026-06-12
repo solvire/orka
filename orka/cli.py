@@ -31,6 +31,12 @@ from orka.surgery.transplanter import transplant_class
 from orka.core.cascade import cascade_import_updates
 from orka.core.init_helper import run_init, show_init_notice, save_status
 
+# Prompt compiler engine (Phase 2 — Strangler Fig pattern)
+from orka.core.compiler import PromptCompiler
+from orka.core.templates import PromptTemplate, InjectionPoint
+from orka.core.rule_resolver import resolve_rules, BUILTIN_RULES_DIR, PROJECT_RULES_DIRNAME
+import yaml
+
 # ---------------------------------------------------------------------------
 # Globals
 # ---------------------------------------------------------------------------
@@ -308,6 +314,239 @@ def refactor(
 
     if not dry_run:
         _bg_scan()
+
+
+# ---------------------------------------------------------------------------
+# Prompt compiler helpers
+# ---------------------------------------------------------------------------
+
+_TEMPLATES_DIR = Path(__file__).resolve().parent / "prompts" / "templates"
+
+
+def _load_template(name: str) -> PromptTemplate:
+    """Load a :class:`PromptTemplate` from a YAML file in the templates dir.
+
+    Parameters
+    ----------
+    name
+        Template name (e.g. ``"refactor"``, ``"test"``).  Corresponds to
+        ``<name>.yaml`` in :const:`_TEMPLATES_DIR`.
+
+    Returns
+    -------
+    PromptTemplate
+        The deserialised template.
+
+    Raises
+    ------
+    typer.Exit
+        If the file doesn't exist or the YAML is malformed.
+    """
+    path = _TEMPLATES_DIR / f"{name}.yaml"
+    if not path.exists():
+        console.print(f"[bold red]Template not found: {name}[/bold red]")
+        console.print(f"  Expected at: {path}")
+        console.print("  Available templates:")
+        for f in sorted(_TEMPLATES_DIR.glob("*.yaml")):
+            console.print(f"    - {f.stem}")
+        raise typer.Exit(code=1)
+
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        console.print(f"[bold red]YAML parse error in {path}:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    if not isinstance(data, dict):
+        console.print(f"[bold red]Invalid template file: {path}[/bold red]")
+        raise typer.Exit(code=1)
+
+    # Convert injection_points strings to enum values
+    if "injection_points" in data:
+        data["injection_points"] = [InjectionPoint(ip) for ip in data["injection_points"]]
+
+    return PromptTemplate(**data)
+
+
+# ---------------------------------------------------------------------------
+# testgen command
+# ---------------------------------------------------------------------------
+
+
+@app.command(name="testgen")
+def testgen(
+    file: str = typer.Option(..., "--file", help="Source file path (relative to project root)"),
+    cls: Optional[str] = typer.Option(None, "--cls", help="Class name containing the method (omit for standalone functions)"),
+    func: Optional[str] = typer.Option(None, "--func", help="Alias for --cls"),
+    method: str = typer.Option(..., "--method", help="Method or function name to generate tests for"),
+    output: Optional[str] = typer.Option(None, "--output", help="Output file path (relative to project root)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview generated tests without writing to disk"),
+    run: bool = typer.Option(False, "--run", help="Run pytest after generating tests"),
+    json_output: bool = typer.Option(False, "--json", help="Output structured JSON"),
+    provider: str = typer.Option(
+        settings.DEFAULT_PROVIDER,
+        "--provider",
+        help="LLM provider",
+    ),
+    rule: list[str] = typer.Option([], "--rule", help="Rule name(s) to inject (repeatable)"),
+) -> None:
+    """Generate pytest tests for a method or function using AI.
+
+    Uses the Prompt Compiler Engine to build a test-generation prompt,
+    invokes the LLM, validates output, and writes the result.
+
+    Examples::
+
+        # Dry-run (prints to stdout)
+        orka testgen --file app.py --method process --dry-run
+
+        # Write to a test file
+        orka testgen --file app.py --cls OrderController --method process \\
+            --output tests/test_processor.py
+
+        # Generate and run tests
+        orka testgen --file app.py --method calculate --output test_calc.py --run
+    """
+    if cls and func:
+        if json_output:
+            _emit_json({"success": False, "error": "--cls and --func are mutually exclusive."})
+        else:
+            console.print("[bold red]--cls and --func are mutually exclusive.[/bold red]")
+        raise typer.Exit(code=1)
+    target_cls = cls or func
+
+    display_target = f"{target_cls}.{method}" if target_cls else method
+    show_init_notice(console, f'testgen --file {file} --method {method}')
+    abs_file = os.path.join(workspace_dir, file)
+
+    if not os.path.exists(abs_file):
+        msg = f"File not found: {abs_file}"
+        if json_output:
+            _emit_json({"success": False, "label": display_target, "error": msg})
+        else:
+            console.print(f"[bold red]{msg}[/bold red]")
+        raise typer.Exit(code=1)
+
+    orchestrator = Orchestrator(workspace_dir, provider=provider)
+    result = orchestrator.generate_tests(
+        file_path=abs_file,
+        method_name=method,
+        class_name=target_cls,
+        output_path=output,
+        dry_run=dry_run,
+        run_pytest=run,
+    )
+
+    if result.success:
+        if json_output or dry_run:
+            _emit_json({
+                "success": True,
+                "label": result.label,
+                "file": result.file_path,
+                "tests_content": result.tests_content,
+                "diff": result.diff,
+                "dry_run": result.dry_run,
+            })
+        else:
+            if output:
+                console.print(
+                    f"[bold green]Tests written to {output} for {display_target}.[/bold green]"
+                )
+            else:
+                # No output path — print tests to stdout
+                console.print(result.tests_content)
+    else:
+        if json_output:
+            _emit_json({
+                "success": False,
+                "label": result.label,
+                "error": result.error,
+            })
+        else:
+            console.print(
+                f"[bold red]Failed to generate tests for {display_target}: {result.error}[/bold red]"
+            )
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# prompt command  (formerly "gen" — shows compiled prompt without invoking LLM)
+# ---------------------------------------------------------------------------
+
+
+@app.command(name="prompt")
+def prompt(
+    prompt_arg: str = typer.Option(..., "--template", "-t", help="Template name (e.g. 'refactor', 'test')"),
+    rule: list[str] = typer.Option([], "--rule", help="Rule name(s) to inject (repeatable)"),
+    file: Optional[str] = typer.Option(None, "--file", help="Source file path"),
+    cls: Optional[str] = typer.Option(None, "--cls", help="Class name"),
+    method: Optional[str] = typer.Option(None, "--method", help="Method or function name"),
+) -> None:
+    """Assemble and display a compiled prompt using the Prompt Compiler Engine.
+
+    This is the Phase 2 preview of the ``prompt`` command.  It loads the
+    requested template, resolves injection rules, and prints the final
+    assembled prompt to the terminal.  No LLM is invoked — use ``testgen``
+    or ``refactor`` to actually run code generation.
+
+    Examples::
+
+        # Compile the refactor template with default rules
+        orka prompt --template refactor
+
+        # Compile the test template with custom rules
+        orka prompt --template test --rule use_pytest_raises --rule test_behavior_not_mocks
+
+        # Include source context (placeholder values for now)
+        orka prompt --template refactor --file app.py --cls OrderController --method process
+    """
+    # ---- 1. Load template ----
+    template = _load_template(prompt_arg)
+    console.print(f"[bold]Template:[/bold] {template.name}")
+    console.print(f"[dim]  Output type: {template.output_type.value}[/dim]")
+    console.print(f"[dim]  Injection points: {[p.value for p in template.injection_points]}[/dim]")
+
+    # ---- 2. Resolve rules ----
+    project_rules_dir = Path(workspace_dir) / PROJECT_RULES_DIRNAME if workspace_dir else None
+
+    resolved_rules = resolve_rules(
+        template_name=template.name,
+        injection_points=template.injection_points,
+        cli_rule_names=rule if rule else None,
+    )
+
+    console.print(f"[bold]Rules resolved:[/bold] {len(resolved_rules)}")
+    for r in resolved_rules:
+        console.print(f"  [dim]• {r.name}[/dim] (tier={r.tier}, point={r.injection_point.value}, priority={r.priority})")
+
+    # ---- 3. Assemble context data ----
+    # Use placeholder values for now — Phase 3 will wire in real extraction
+    context_data = {
+        "existing_code": "def example():\n    pass",
+        "class_context": "class Placeholder:\n    pass",
+        "business_requirements": "Implement the business logic.",
+        "graph_constraints": "No known callers.",
+        "file_path": file or "(not specified)",
+    }
+
+    # ---- 4. Compile ----
+    compiler = PromptCompiler()
+    try:
+        final_prompt = compiler.compile(template, resolved_rules, context_data)
+    except Exception as e:
+        console.print(f"[bold red]Compilation failed:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    # ---- 5. Display ----
+    console.print()
+    console.print("[bold]─" * 50 + "[/bold]")
+    console.print("[bold green]COMPILED PROMPT[/bold green]")
+    console.print("[bold]─" * 50 + "[/bold]")
+    console.print()
+    console.print(final_prompt)
+    console.print()
+    console.print("[bold]─" * 50 + "[/bold]")
+    console.print(f"[dim]Total: {len(final_prompt)} characters[/dim]")
 
 
 # ---------------------------------------------------------------------------
