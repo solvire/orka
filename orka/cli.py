@@ -12,6 +12,7 @@ Usage:
     ./orka refactor --file src.py --cls MyClass --method my_method --req "new logic"
 """
 
+import json
 import os
 import logging
 import subprocess
@@ -72,8 +73,7 @@ def _is_scan_running() -> bool:
 
 def _emit_json(data: dict) -> None:
     """Print *data* as a single line of JSON to stdout."""
-    import json as json_mod
-    sys.stdout.write(json_mod.dumps(data, default=str) + "\n")
+    sys.stdout.write(json.dumps(data, default=str) + "\n")
     sys.stdout.flush()
 
 
@@ -563,8 +563,6 @@ def doctor(
     from orka.core.init_helper import is_initialized, load_status
 
     if json_output:
-        import json as json_mod
-
         report = {
             "initialized": is_initialized(),
             "provider": settings.DEFAULT_PROVIDER,
@@ -629,10 +627,9 @@ def doctor(
     # 4. Graph database health
     graph_db_path = os.path.join(workspace_dir, ".orka_cache.graph.json")
     if os.path.exists(graph_db_path):
-        import json as json_mod
         try:
             with open(graph_db_path) as f:
-                graph_data = json_mod.load(f)
+                graph_data = json.load(f)
             node_count = len(graph_data.get("nodes", []))
             edge_count = len(graph_data.get("edges", []))
             console.print(f"[bold]Graph database:[/bold] {node_count} nodes, {edge_count} edges")
