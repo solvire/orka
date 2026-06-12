@@ -29,7 +29,7 @@ from orka.orchestrator import Orchestrator
 from orka.core.ingester import OrkaGraphDB
 from orka.surgery.transplanter import transplant_class
 from orka.core.cascade import cascade_import_updates
-from orka.core.init_helper import run_init, show_init_notice, save_status
+from orka.core.init_helper import run_init, show_init_notice, save_status, is_initialized, load_status
 
 # Prompt compiler engine (Phase 2 — Strangler Fig pattern)
 from orka.core.compiler import PromptCompiler
@@ -547,6 +547,99 @@ def prompt(
     console.print()
     console.print("[bold]─" * 50 + "[/bold]")
     console.print(f"[dim]Total: {len(final_prompt)} characters[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# doctor command
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def doctor(
+    json_output: bool = typer.Option(False, "--json", help="Output structured JSON"),
+) -> None:
+    """Diagnose Orka configuration and project health."""
+    from orka.config import settings
+    from orka.core.init_helper import is_initialized, load_status
+
+    if json_output:
+        import json as json_mod
+
+        report = {
+            "initialized": is_initialized(),
+            "provider": settings.DEFAULT_PROVIDER,
+            "smart_model": settings.smart_model,
+            "fast_model": settings.fast_model,
+            "edit_model": settings.edit_model,
+            "temperature": settings.TEMPERATURE,
+            "timeout": settings.TIMEOUT,
+            "max_retries": settings.MAX_RETRIES,
+            "verify_ssl": settings.VERIFY_SSL,
+            "auto_scan": settings.AUTO_SCAN_AFTER_MUTATION,
+            "dry_run": settings.DRY_RUN,
+            "verbose": settings.VERBOSE,
+            "api_keys": {
+                "openai": bool(settings.OPENAI_API_KEY),
+                "deepseek": bool(settings.DEEPSEEK_API_KEY),
+                "together_ai": bool(settings.TOGETHER_API_KEY),
+                "gemini": bool(settings.GEMINI_API_KEY),
+                "anthropic": bool(settings.ANTHROPIC_API_KEY),
+                "openai_compat": bool(settings.API_KEY),
+            },
+            "project_root": str(settings.PROJECT_ROOT),
+        }
+
+        # Add last_scan timestamp if available
+        try:
+            status = load_status()
+            report["last_scan"] = status.get("last_scan")
+        except Exception:
+            report["last_scan"] = None
+
+        _emit_json(report)
+        return
+
+    # Human-readable output
+    console.print("[bold]Orka Doctor — Configuration & Health Check[/bold]")
+    console.print()
+
+    # 1. Initialization status
+    if is_initialized():
+        console.print("[bold green]✓[/bold green] Project is initialized")
+    else:
+        console.print("[bold yellow]⚠[/bold yellow] Project is not initialized — run [bold]orka init[/bold]")
+    console.print()
+
+    # 2. Configuration report
+    console.print(settings.report())
+    console.print()
+
+    # 3. Last scan timestamp
+    try:
+        status = load_status()
+        last_scan = status.get("last_scan")
+        if last_scan:
+            console.print(f"[bold]Last graph scan:[/bold] {last_scan}")
+        else:
+            console.print("[dim]No graph scan has been performed yet.[/dim]")
+    except Exception:
+        console.print("[dim]Could not read scan status.[/dim]")
+    console.print()
+
+    # 4. Graph database health
+    graph_db_path = os.path.join(workspace_dir, ".orka_cache.graph.json")
+    if os.path.exists(graph_db_path):
+        import json as json_mod
+        try:
+            with open(graph_db_path) as f:
+                graph_data = json_mod.load(f)
+            node_count = len(graph_data.get("nodes", []))
+            edge_count = len(graph_data.get("edges", []))
+            console.print(f"[bold]Graph database:[/bold] {node_count} nodes, {edge_count} edges")
+        except Exception:
+            console.print("[dim]Graph database exists but could not be read.[/dim]")
+    else:
+        console.print("[dim]No graph database found — run [bold]orka scan[/bold] to build it.[/dim]")
 
 
 # ---------------------------------------------------------------------------
