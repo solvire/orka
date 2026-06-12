@@ -163,10 +163,12 @@ def build_fixer_prompt(
             ### FIX INSTRUCTIONS:
             1. Analyse the error message carefully — identify the root cause.
             2. Fix the test code so that all tests pass.
-            3. Output ONLY raw Python test functions — no imports, no markdown
+            3. The function MUST start with "def test_" and accept (tmp_path)
+               as its only parameter — no monkeypatch, no mocker, no fixtures.
+            4. ALL code must be INSIDE the function body. No module-level
+               statements, no monkeypatch.setattr(), no imports.
+            5. Output ONLY raw Python test functions — no imports, no markdown
                fences, no explanations.
-            4. Keep the same import statements if they are correct.
-            5. Do not change the test structure unnecessarily.
             6. Use ``pytest.raises(...)`` for expected exceptions.
             7. Use ``pytest.approx()`` for float comparisons.
 
@@ -174,7 +176,10 @@ def build_fixer_prompt(
         """)
         system = (
             "You are a pytest debugging specialist. Analyse the error and fix the tests. "
-            "Output ONLY raw Python test code — no markdown fences, no explanations."
+            "Output ONLY raw Python test code — no markdown fences, no explanations. "
+            "The function MUST start with \"def test_\" and accept (tmp_path) as its "
+            "only parameter. ALL code must be INSIDE the function body. "
+            "No module-level statements, no monkeypatch.setattr(), no imports."
         )
 
     else:  # refactor

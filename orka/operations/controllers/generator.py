@@ -99,9 +99,15 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
     # ── 4. Build system instruction based on operation type ────────────
     if template_name == "test":
         system_instruction = (
-            "You are a pytest specialist. Output ONLY a single raw Python "
-            "test function - no imports, no module docstrings, no markdown "
-            "fences. Generate exactly one function per response."
+            "You are a pytest specialist. You will receive a compiled prompt "
+            "from the template engine below. "
+            "Output ONLY a single raw Python test function. "
+            "The function MUST be a valid pytest test function starting with "
+            "\"def test_\" and accepting (tmp_path) as its only parameter — "
+            "no monkeypatch, no mocker, no other fixtures. "
+            "ALL code must be INSIDE the function body. "
+            "No module-level statements, no monkeypatch.setattr(), no imports. "
+            "No docstrings, no module docstrings, no markdown fences."
         )
     else:
         system_instruction = (

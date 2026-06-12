@@ -87,10 +87,42 @@ Existing. No changes needed.
 | 3 | `test_resolve_class_takes_precedence_over_method` | class_name is used, method_name is ignored |
 | 4 | `test_resolve_none_when_resolution_fails` | Empty file_path returns None |
 
+## Test Helpers (`tests/test_helpers.py`) — ✅ DONE (14 tests)
+
+### TestLoadTemplate (4 tests)
+| # | Test Name | Description |
+|---|-----------|-------------|
+| 1 | `test_load_real_refactor_template` | Loads real refactor.yaml, checks name, output_type, injection_points, metadata |
+| 2 | `test_load_real_test_template` | Loads real test.yaml, checks name, output_type, injection_points |
+| 3 | `test_load_template_with_injection_points` | Creates fake YAML with injection_points strings, verifies they become InjectionPoint enums |
+| 4 | `test_load_template_raises_file_not_found` | FileNotFoundError for nonexistent template |
+
+### TestExtractErrorSummary (4 tests)
+| # | Test Name | Description |
+|---|-----------|-------------|
+| 1 | `test_extracts_failures_section` | Extracts FAILURES section, stopping before short test summary |
+| 2 | `test_falls_back_to_tail_lines` | Falls back to last lines when no FAILURES section |
+| 3 | `test_returns_output_when_no_failures_and_few_lines` | Returns content when short and no FAILURES |
+| 4 | `test_empty_output_returns_empty` | Empty output returns empty string |
+
+### TestTruncateErrorSummary (3 tests)
+| # | Test Name | Description |
+|---|-----------|-------------|
+| 1 | `test_short_summary_unchanged` | Under max_chars, unchanged |
+| 2 | `test_long_summary_truncated` | Long output truncated with marker |
+| 3 | `test_truncation_has_head_tail_and_marker` | Truncated output has head, marker, tail |
+
+### TestBuildFixerPrompt (3 tests)
+| # | Test Name | Description |
+|---|-----------|-------------|
+| 1 | `test_builds_testgen_prompt` | Builds testgen fix prompt with all context |
+| 2 | `test_builds_refactor_prompt` | Builds refactor fix prompt with all context |
+| 3 | `test_build_includes_test_file_target_when_provided` | Accepts test_file_target parameter |
+
 ## Test CLI Commands (`tests/test_cli_commands.py`) — 🟡 PARTIAL (prompt + testgen)
 
 Not yet needed — tested manually.
 
 ---
 
-**Total: 41 test definitions across 4 new test classes**
+**Total: 55 test definitions across 5 new test classes**
