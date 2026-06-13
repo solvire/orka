@@ -27,8 +27,8 @@ class TestLoadTemplate:
         assert template.name == "refactor"
         assert template.output_type.value == "body"
         assert "system_header" in [p.value for p in template.injection_points]
-        assert "{{ system_header }}" in template.system
-        assert "{{ existing_code }}" in template.user
+        assert "%%system_header%%" in template.system
+        assert "%%existing_code%%" in template.user
         assert template.metadata.get("version") == 1
 
     def test_load_real_test_template(self):
@@ -37,8 +37,8 @@ class TestLoadTemplate:
         assert template.name == "test"
         assert template.output_type.value == "standalone"
         assert "quality_gates" in [p.value for p in template.injection_points]
-        assert "{{ system_header }}" in template.system
-        assert "{{ existing_code }}" in template.user
+        assert "%%system_header%%" in template.system
+        assert "%%existing_code%%" in template.user
 
     def test_load_template_with_injection_points(self, tmp_path):
         """Should parse injection_points strings into InjectionPoint enums."""
@@ -48,7 +48,7 @@ class TestLoadTemplate:
             "name": "custom_test",
             "description": "Custom template",
             "system": "System prompt",
-            "user": "User prompt {{ existing_code }}",
+            "user": "User prompt %%existing_code%%",
             "output_type": "standalone",
             "injection_points": ["system_header", "quality_gates"],
             "metadata": {"version": 1, "author": "test"},

@@ -529,63 +529,114 @@ def prompt(
     file: Optional[str] = typer.Option(None, "--file", help="Source file path"),
     cls: Optional[str] = typer.Option(None, "--cls", help="Class name"),
     method: Optional[str] = typer.Option(None, "--method", help="Method or function name"),
+    req: Optional[str] = typer.Option(None, "--req", help="Business requirements (used as context)"),
 ) -> None:
-    """Assemble and display a compiled prompt using the Prompt Compiler Engine.
+    """Assemble and display a compiled prompt using the graph pipeline.
 
-    This is the Phase 2 preview of the ``prompt`` command.  It loads the
-    requested template, resolves injection rules, and prints the final
-    assembled prompt to the terminal.  No LLM is invoked — use ``testgen``
-    or ``refactor`` to actually run code generation.
+    Runs the graph through ``gather_context`` and ``compile_prompt`` nodes,
+    then prints the fully enriched prompt.  No LLM is invoked — use
+    ``testgen`` or ``refactor`` to actually run code generation.
+
+    When ``--file`` (and optionally ``--cls``/``--method``/``--req``) are
+    provided, real source extraction and enrichment are performed.
 
     Examples::
 
-        # Compile the refactor template with default rules
+        # Compile the refactor template with placeholders
         orka prompt --template refactor
+
+        # Compile with real source extraction
+        orka prompt --template refactor --file app.py --cls OrderController --method process
+
+        # Compile with requirements
+        orka prompt --template refactor --file app.py --method calculate \\
+            --req "add input validation for negative amounts"
 
         # Compile the test template with custom rules
         orka prompt --template test --rule use_pytest_raises --rule test_behavior_not_mocks
-
-        # Include source context (placeholder values for now)
-        orka prompt --template refactor --file app.py --cls OrderController --method process
     """
-    # ---- 1. Load template ----
-    template = _load_template(prompt_arg)
-    console.print(f"[bold]Template:[/bold] {template.name}")
-    console.print(f"[dim]  Output type: {template.output_type.value}[/dim]")
-    console.print(f"[dim]  Injection points: {[p.value for p in template.injection_points]}[/dim]")
-
-    # ---- 2. Resolve rules ----
-    project_rules_dir = Path(workspace_dir) / PROJECT_RULES_DIRNAME if workspace_dir else None
-
-    resolved_rules = resolve_rules(
-        template_name=template.name,
-        injection_points=template.injection_points,
-        cli_rule_names=rule if rule else None,
-    )
-
-    console.print(f"[bold]Rules resolved:[/bold] {len(resolved_rules)}")
-    for r in resolved_rules:
-        console.print(f"  [dim]• {r.name}[/dim] (tier={r.tier}, point={r.injection_point.value}, priority={r.priority})")
-
-    # ---- 3. Assemble context data ----
-    # Use placeholder values for now — Phase 3 will wire in real extraction
-    context_data = {
-        "existing_code": "def example():\n    pass",
-        "class_context": "class Placeholder:\n    pass",
-        "business_requirements": "Implement the business logic.",
-        "graph_constraints": "No known callers.",
-        "file_path": file or "(not specified)",
+    # ---- 1. Run gather_context if --file is given ────────────────────
+    # Build a minimal state dict for the gather_context and compile_prompt nodes
+    abs_file = os.path.join(workspace_dir, file) if file else None
+    state: dict[str, Any] = {
+        "source_file": abs_file or "",
+        "target_output_file": abs_file or "",
+        "prompt_template_name": prompt_arg,
+        "requirements": req or "Implement the business logic.",
+        "target_node_id": f"{cls}.{method}" if cls and method else (method or "unknown"),
+        "dry_run": True,
+        "max_iterations": 1,
+        "provider": settings.DEFAULT_PROVIDER,
+        "class_name": cls,
+        "method_name": method or "",
+        "existing_code": "",
+        "class_context": "",
+        "similar_examples": [],
+        "original_file_backup": None,
+        "compiled_prompt": "",
+        "compiled_prompt_sections": {},
+        "draft_snippet": "",
+        "draft_file_content": "",
+        "validation_output": "",
+        "is_valid": False,
+        "original_draft_code": "",
+        "test_file_target": None,
+        "iteration_count": 0,
+        "fatal_error": None,
     }
 
-    # ---- 4. Compile ----
-    compiler = PromptCompiler()
+    # Run gather_context if we have a real file
+    if abs_file and os.path.exists(abs_file):
+        from orka.operations.controllers import context
+
+        try:
+            ctx_result = context.execute(state)
+            state.update(ctx_result)
+            console.print(f"[dim]  Source extracted: {len(state.get('existing_code', ''))} chars[/dim]")
+            if state.get("class_context"):
+                console.print(f"[dim]  Class context: {len(state['class_context'])} chars[/dim]")
+        except Exception as e:
+            console.print(f"[yellow]  Warning: extraction failed ({e}) — using placeholders[/yellow]")
+    else:
+        console.print(f"[dim]  No source file — using placeholder context[/dim]")
+
+    # ---- 2. Run compile_prompt node ─────────────────────────────────
+    from orka.operations.controllers import compiler_node
+
     try:
-        final_prompt = compiler.compile(template, resolved_rules, context_data)
+        compile_result = compiler_node.execute(state)
+        state.update(compile_result)
     except Exception as e:
         console.print(f"[bold red]Compilation failed:[/bold red] {e}")
         raise typer.Exit(code=1)
 
-    # ---- 5. Display ----
+    final_prompt = state.get("compiled_prompt", "")
+    sections = state.get("compiled_prompt_sections", {})
+
+    # ---- 3. Display template info ───────────────────────────────────
+    console.print()
+    console.print(f"[bold]Template:[/bold] {sections.get('template_name', prompt_arg)}")
+    rules = sections.get("rules_resolved", [])
+    console.print(f"[bold]Rules resolved:[/bold] {len(rules)}")
+    for r_name in rules:
+        console.print(f"  [dim]• {r_name}[/dim]")
+
+    sig = sections.get("signature", {})
+    if sig and sig.get("name"):
+        console.print()
+        console.print(f"[bold]Signature:[/bold] {sig['name']}({', '.join(sig.get('params', []))})")
+        if sig.get("return_type"):
+            console.print(f"  [dim]Returns: {sig['return_type']}[/dim]")
+        if sig.get("docblock"):
+            console.print(f"  [dim]Docblock: {sig['docblock'][:80]}...[/dim]")
+        if sig.get("is_async"):
+            console.print(f"  [dim]Async: yes[/dim]")
+
+    graph_summary = sections.get("graph_summary", "")
+    if graph_summary:
+        console.print(f"  [dim]Graph: {graph_summary}[/dim]")
+
+    # ---- 4. Display the compiled prompt ─────────────────────────────
     console.print()
     console.print("[bold]─" * 50 + "[/bold]")
     console.print("[bold green]COMPILED PROMPT[/bold green]")
@@ -594,7 +645,7 @@ def prompt(
     console.print(final_prompt)
     console.print()
     console.print("[bold]─" * 50 + "[/bold]")
-    console.print(f"[dim]Total: {len(final_prompt)} characters[/dim]")
+    console.print(f"[dim]Total: {len(final_prompt)} characters, ~{len(final_prompt.split())} tokens (est.)[/dim]")
 
 
 # ---------------------------------------------------------------------------

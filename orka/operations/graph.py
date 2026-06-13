@@ -10,7 +10,7 @@ Pipeline
 --------
 ::
 
-    START -> gather_context -> generate_draft -> validate_draft
+    START -> gather_context -> compile_prompt -> generate_draft -> validate_draft
     -> (condition) if is_valid -> END
     -> if iteration_count >= max_iterations -> END (with rollback)
     -> else -> fix_draft -> validate_draft (loop)
@@ -25,7 +25,7 @@ from typing import Any, Optional
 from langgraph.graph import END, StateGraph
 
 from orka.config import settings
-from orka.operations.controllers import context, generator, validator, fixer
+from orka.operations.controllers import context, compiler_node, generator, validator, fixer
 from orka.operations.state import SurgeryState
 
 logger = logging.getLogger(__name__)
@@ -52,13 +52,15 @@ def build_surgery_graph() -> StateGraph:
 
     # ── Add nodes ─────────────────────────────────────────────────────
     workflow.add_node("gather_context", context.execute)
+    workflow.add_node("compile_prompt", compiler_node.execute)
     workflow.add_node("generate_draft", generator.execute)
     workflow.add_node("validate_draft", validator.execute)
     workflow.add_node("fix_draft", fixer.execute)
 
     # ── Edges ─────────────────────────────────────────────────────────
     workflow.set_entry_point("gather_context")
-    workflow.add_edge("gather_context", "generate_draft")
+    workflow.add_edge("gather_context", "compile_prompt")
+    workflow.add_edge("compile_prompt", "generate_draft")
     workflow.add_edge("generate_draft", "validate_draft")
 
     # Conditional routing after validation
@@ -236,6 +238,9 @@ def run_surgery(
         "class_context": "",
         "similar_examples": [],
         "original_file_backup": None,
+        # Compiled prompt
+        "compiled_prompt": "",
+        "compiled_prompt_sections": {},
         # Draft code
         "draft_snippet": "",
         "draft_file_content": "",

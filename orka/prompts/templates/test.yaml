@@ -5,7 +5,6 @@ description: >
   are handled deterministically by the import fixer.
 output_type: standalone
 injection_points:
-  - system_header
   - constraints_top
   - constraints_bottom
   - quality_gates
@@ -17,7 +16,6 @@ metadata:
 system: |
   You are a pytest specialist working on a Python codebase.
 
-  {{ system_header }}
 
 user: |
   ### STRICT CONSTRAINTS:
@@ -31,23 +29,35 @@ user: |
      automatically.
   6. Include docstrings on each test function explaining the scenario.
 
-  {{ constraints_top }}
+  %%constraints_top%%
 
   ### CLASS CONTEXT (for understanding the class structure):
-  {{ class_context }}
+  %%class_context%%
 
   ### SOURCE FILE:
-  {{ file_path }}
+  %%file_path%%
 
   ### METHOD/FUNCTION TO TEST:
   ```python
-  {{ existing_code }}
+  %%existing_code%%
   ```
 
-  {{ constraints_bottom }}
+  ### EXISTING DOCBLOCK (preserve intent):
+  %%docblock%%
 
-  {{ quality_gates }}
+  %%constraints_bottom%%
 
-  {{ style_guide }}
+  %%quality_gates%%
+
+  %%style_guide%%
+
+  ### ADDITIONAL CONSTRAINTS:
+  7. Use ``tmp_path`` (pytest built-in fixture) for any filesystem tests.
+     Do NOT use ``tmpdir`` (deprecated) or ``tempfile``.
+  8. Do NOT use ``monkeypatch`` or ``mocker`` — prefer dependency injection
+     or restructuring the code to avoid mocking.
+  9. Test the public API only — avoid testing private methods (``_prefix``).
+  10. Each test function MUST be self-contained — no shared module-level
+      variables or fixtures that are not built-in.
 
   ### PYTHON TEST FUNCTIONS (RAW PYTHON ONLY):

@@ -94,6 +94,15 @@ class SurgeryState(TypedDict):
     test_file_target: Optional[str]
     """If set, pytest runs against this file instead of target_output_file."""
 
+    # ── Compiled prompt (set by compile_prompt node) ───────────────────
+    compiled_prompt: str
+    """The fully compiled prompt string, ready for the LLM."""
+
+    compiled_prompt_sections: dict
+    """Structured breakdown of the compiled prompt (template name, rules,
+    signature analysis, graph summary). Useful for introspection and
+    the ``prompt`` CLI command."""
+
     # ── Loop control ───────────────────────────────────────────────────
     iteration_count: int
     """How many fix attempts have been made (0-indexed)."""

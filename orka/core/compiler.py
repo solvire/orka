@@ -1,5 +1,19 @@
 """
-Prompt compilation engine — renders Jinja2 templates with injected rules.
+Prompt compilation engine — renders templates with injected rules using
+custom ``%%variable%%`` delimiters.
+
+``%%var%%`` was chosen over alternatives (Jinja2's ``{{var}}``, stdlib's
+``{var}`` or ``$var``) because:
+
+* **Zero collision** — ``%%`` is meaningless in Python, YAML, Markdown,
+  JSON, shell, math, finance, LaTeX, and git.  F-string braces ``{x}``,
+  dict literals, JSON, and ``$`` shell variables all pass through
+  untouched — no escaping needed.
+* **Visible** — ``%%existing_code%%`` is instantly recognisable as a
+  placeholder to both humans and LLMs.
+* **No dependencies** — simple regex substitution, pure stdlib.
+* **No escaping** — the Jinja2 bug (``{`` → ``{{``) that forced manual
+  escaping in ``generator.py`` simply doesn't exist here.
 
 Core class
 ----------
@@ -20,9 +34,8 @@ Usage::
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
-
-from jinja2 import Environment
 
 from orka.core.templates import InjectionPoint, InjectionRule, PromptTemplate
 
@@ -37,28 +50,8 @@ logger = logging.getLogger(__name__)
 # for English prose). Adjust via env var or config in the future.
 _DEFAULT_RULE_BUDGET_CHARS = 4000
 
-
-# ===================================================================
-# Jinja2 helpers
-# ===================================================================
-
-
-def _build_jinja_env() -> Environment:
-    """Create a Jinja2 environment with safe defaults.
-
-    - No auto-escaping (we're generating prompts, not HTML).
-    - ``undefined`` set to ``DebugUndefined`` so that missing variables
-      render as ``{{ MISSING }}`` instead of raising — useful for
-      catching template bugs during development.
-    """
-    from jinja2 import DebugUndefined
-
-    return Environment(
-        undefined=DebugUndefined,
-        autoescape=False,
-        trim_blocks=True,
-        lstrip_blocks=True,
-    )
+# Regex to find %%variable%% placeholders — custom delimiter, zero collisions.
+_PLACEHOLDER_RE = re.compile(r"%%([a-zA-Z_][a-zA-Z_0-9]*)%%")
 
 
 # ===================================================================
@@ -102,14 +95,11 @@ def _enforce_rule_budget(
     if not rules:
         return rules
 
-    # Work from most important (lowest priority) to least important
-    # The list is already sorted ascending by priority.
     total_chars = sum(len(r.text) for r in rules)
 
     if total_chars <= budget_chars:
-        return rules  # all fit
+        return rules
 
-    # Drop from the end (highest priority = least important)
     kept: list[InjectionRule] = []
     running = 0
     dropped: list[str] = []
@@ -143,6 +133,96 @@ def _enforce_rule_budget(
 
 
 # ===================================================================
+# Template rendering helpers
+# ===================================================================
+
+
+def _render_template(source: str, context: dict[str, Any], label: str = "") -> str:
+    """Render a template string with ``%%variable%%`` placeholders.
+
+    Uses a simple regex substitution: every ``%%name%%`` pattern in
+    *source* is replaced with ``str(context["name"])``.
+
+    This is intentionally simpler than Jinja2 — there are no conditionals,
+    no loops, no filters.  If you need conditional logic, add it in
+    Python before calling this function.
+
+    Parameters
+    ----------
+    source
+        The template string with ``%%variable%%`` placeholders.
+    context
+        Variable context for substitution.
+    label
+        A human-readable label (e.g. ``"system"`` or ``"user"``)
+        for error messages.
+
+    Returns
+    -------
+    str
+        The rendered string with all placeholders replaced and whitespace
+        stripped.
+
+    Raises
+    ------
+    KeyError
+        If a placeholder in the template is missing from *context*.
+    """
+    def _replacer(m: re.Match) -> str:
+        key = m.group(1)
+        if key not in context:
+            logger.error(
+                "Template variable %r not found in context for %r section. "
+                "Available keys: %s",
+                key,
+                label,
+                sorted(context.keys()),
+            )
+            raise KeyError(key)
+        return str(context[key])
+
+    try:
+        result = _PLACEHOLDER_RE.sub(_replacer, source)
+        return result.strip()
+    except KeyError:
+        raise
+
+
+def _validate_placeholders(
+    source: str,
+    template_name: str,
+    section: str,
+) -> list[str]:
+    """Find all ``%%variable%%`` references in a template string.
+
+    Useful for early validation — catch typos in variable names before
+    rendering.
+
+    Parameters
+    ----------
+    source
+        The template string.
+    template_name
+        Name of the template (for error messages).
+    section
+        Which section (``"system"`` or ``"user"``).
+
+    Returns
+    -------
+    list[str]
+        Sorted list of unique variable names found.
+    """
+    variables = sorted(set(m.group(1) for m in _PLACEHOLDER_RE.finditer(source)))
+    logger.debug(
+        "Template %%r (%%s) uses variables: %%s",
+        template_name,
+        section,
+        ", ".join(variables),
+    )
+    return variables
+
+
+# ===================================================================
 # Main compiler
 # ===================================================================
 
@@ -153,6 +233,10 @@ class PromptCompiler:
     The compiler is stateless by design — all state (templates, rules,
     context data) is passed to :meth:`compile`. This makes it safe for
     concurrent use and easy to test.
+
+    Templates use ``%%variable%%`` syntax — a custom delimiter with zero
+    collisions.  No escaping of Python braces, dollar signs, or any other
+    characters is ever needed.
 
     Typical workflow::
 
@@ -193,14 +277,12 @@ class PromptCompiler:
 
         Steps
         -----
-        1. **Group** rules by their ``injection_point`` into a dict.
-        2. **Budget** — apply ``_enforce_rule_budget`` to each group
-           independently, ensuring no single injection point blows the
-           budget.
-        3. **Render** — render both the ``system`` and ``user`` Jinja2
-           strings using the grouped rules and ``context_data``.
-        4. **Return** — concatenate the system and user prompts with a
-           blank line separator, or return just one if the other is empty.
+        1. **Group** rules by ``injection_point`` into a dict.
+        2. **Budget** — apply ``_enforce_rule_budget`` to each group.
+        3. **Validate** — log all ``%%placeholder%%`` variables found.
+        4. **Render** — substitute all placeholders in ``system`` and
+           ``user`` sections via ``_render_template``.
+        5. **Return** — concatenate with blank line separator.
 
         Parameters
         ----------
@@ -208,9 +290,8 @@ class PromptCompiler:
             The :class:`PromptTemplate` to compile.
         resolved_rules
             Rules returned by :func:`~orka.core.rule_resolver.resolve_rules`.
-            Expected to be sorted deterministically.
         context_data
-            Arbitrary key-value pairs for Jinja2 interpolation.
+            Arbitrary key-value pairs for placeholder substitution.
             Common keys: ``existing_code``, ``business_requirements``,
             ``class_context``, ``graph_constraints``.
 
@@ -221,8 +302,8 @@ class PromptCompiler:
 
         Raises
         ------
-        jinja2.TemplateError
-            If the template strings are malformed.
+        KeyError
+            If a required placeholder is missing from *context_data*.
         """
         ctx = dict(context_data or {})
 
@@ -237,27 +318,29 @@ class PromptCompiler:
             budgeted = _enforce_rule_budget(rules_at_point, self.rule_budget_chars)
             grouped[point] = budgeted
             ctx[point] = "\n".join(r.text for r in budgeted)
-            ctx[f"{point}_rules"] = budgeted
 
         # Ensure all template injection points have at least empty values
         for ip in template.injection_points:
             key = ip.value
             if key not in ctx:
                 ctx[key] = ""
-                ctx[f"{key}_rules"] = []
 
-        # ---- Step 3: Render ----
-        env = _build_jinja_env()
+        # ---- Step 3: Validate placeholders (early warning) ----
+        _validate_placeholders(template.system, template.name, "system")
+        _validate_placeholders(template.user, template.name, "user")
 
+        # ---- Step 4: Render ----
         rendered_parts: list[str] = []
 
         if template.system.strip():
-            system_rendered = self._render_string(env, template.system, ctx, "system")
-            rendered_parts.append(system_rendered)
+            rendered_parts.append(
+                _render_template(template.system, ctx, f"{template.name}:system")
+            )
 
         if template.user.strip():
-            user_rendered = self._render_string(env, template.user, ctx, "user")
-            rendered_parts.append(user_rendered)
+            rendered_parts.append(
+                _render_template(template.user, ctx, f"{template.name}:user")
+            )
 
         final = "\n\n".join(rendered_parts).strip()
 
@@ -271,46 +354,3 @@ class PromptCompiler:
         )
 
         return final
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _render_string(
-        env: Environment,
-        source: str,
-        context: dict[str, Any],
-        label: str = "",
-    ) -> str:
-        """Render a single Jinja2 string with the given context.
-
-        Parameters
-        ----------
-        env
-            A Jinja2 :class:`Environment`.
-        source
-            The Jinja2 template string.
-        context
-            Variable context for rendering.
-        label
-            A human-readable label (e.g. ``"system"`` or ``"user"``)
-            for error messages.
-
-        Returns
-        -------
-        str
-            The rendered string.
-
-        Raises
-        ------
-        jinja2.TemplateError
-            On syntax or rendering errors.
-        """
-        try:
-            template = env.from_string(source)
-            result = template.render(**context)
-            return result.strip()
-        except Exception as exc:
-            logger.error("Jinja2 render error in %r section: %s", label, exc)
-            raise

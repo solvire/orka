@@ -5,7 +5,6 @@ description: >
   and outputs ONLY the new body logic (no signature, no decorators).
 output_type: body
 injection_points:
-  - system_header
   - constraints_top
   - constraints_bottom
   - quality_gates
@@ -17,7 +16,6 @@ system: |
   You are an elite Python backend architect working on Orka CLI.
   Your task is to write ONLY the internal body logic for a specific method.
 
-  {{ system_header }}
 
 user: |
   ### STRICT CONSTRAINTS:
@@ -26,24 +24,36 @@ user: |
   3. DO NOT wrap the output in markdown code blocks like ```python.
   4. Return ONLY valid Python code at the base indentation level (0 spaces).
 
-  {{ constraints_top }}
+  %%constraints_top%%
 
   ### GRAPH DEPENDENCY CONSTRAINTS (DO NOT BREAK THESE):
-  {{ graph_constraints }}
+  %%graph_constraints%%
 
   ### CLASS CONTEXT:
-  {{ class_context }}
+  %%class_context%%
 
   ### EXISTING METHOD SIGNATURE & CODE:
   ```python
-  {{ existing_code }}
+  %%existing_code%%
   ```
 
+  ### EXISTING DOCBLOCK (preserve intent):
+  %%docblock%%
+
   ### NEW BUSINESS REQUIREMENTS:
-  {{ business_requirements }}
+  %%business_requirements%%
 
-  {{ constraints_bottom }}
+  %%constraints_bottom%%
 
-  {{ quality_gates }}
+  %%quality_gates%%
+
+  ### ADDITIONAL CONSTRAINTS:
+  5. Do NOT add new methods, classes, or imports — only modify the body.
+  6. Be LSP-aware: do not change method signature, return type, or
+     decorators — external callers depend on them.
+  7. Do NOT remove existing logic outside the method body (e.g. imports,
+     other methods, class-level attributes).
+  8. Do NOT add new decorators or class-level variables.
 
   ### SYNTHESIZED BODY LOGIC (RAW PYTHON ONLY):
+

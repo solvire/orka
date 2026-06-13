@@ -93,10 +93,6 @@ So `orka prompt --template test` shows fake data. The real `testgen` run works c
 
 ## Next Goals
 
-### 1. Swap Jinja2 → string.Template
-
-`compiler.py` → replace with `string.Template`. Templates use `$var` syntax instead of `{{ var }}`. Remove the escape logic in `generator.py`. Run all tests after.
-
 ### 2. Make the LLM see model schemas
 
 In `context.py` gather step, when the target is a standalone function that returns a known type, include the return type's class source. For `load_template`, that means including `PromptTemplate`'s definition.
