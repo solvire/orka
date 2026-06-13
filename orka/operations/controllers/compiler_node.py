@@ -42,6 +42,18 @@ class _SignatureCollector(cst.CSTVisitor):
     """Extract signature-level info from a method/function definition."""
 
     def __init__(self) -> None:
+        """Initialise the collector.
+
+        Attributes set after visiting a function definition:
+        - ``params``: list of parameter strings (e.g. ``"x: int"``)
+        - ``has_return_annotation``: whether a return type was declared
+        - ``return_annotation``: the raw return type string
+        - ``docblock``: the first docstring in the function body
+        - ``has_decorators``: whether any decorators are present
+        - ``decorator_count``: number of decorators
+        - ``is_async``: whether the function is ``async def``
+        - ``name``: the function/method name
+        """
         self.params: list[str] = []
         self.has_return_annotation = False
         self.return_annotation: str = ""
@@ -52,6 +64,16 @@ class _SignatureCollector(cst.CSTVisitor):
         self.name: str = ""
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> bool | None:
+        """Extract signature metadata from a single function definition.
+
+        Populates ``self`` attributes with:
+        - name, async status, decorator count
+        - parameter names and annotations
+        - return annotation
+        - first docstring in the body
+
+        Returns ``False`` to prevent descending into nested functions.
+        """
         self.name = node.name.value
         self.is_async = node.asynchronous is not None
         self.has_decorators = bool(node.decorators)
@@ -85,10 +107,28 @@ class _SignatureCollector(cst.CSTVisitor):
 
 
 def _analyse_signature(existing_code: str) -> dict[str, Any]:
-    """Parse a method/function definition and return structured info.
+    """Parse a method/function definition and return structured signature info.
 
-    Returns a dict with keys: ``name``, ``params``, ``return_type``,
-    ``docblock``, ``is_async``, ``decorator_count``.
+    Uses LibCST to extract the first function definition found in the code
+    snippet.  If parsing fails (e.g. the snippet is empty or syntactically
+    invalid), returns a default dict with empty values — this is non-fatal.
+
+    Parameters
+    ----------
+    existing_code
+        A Python source string containing a single function/method definition
+        (or an empty string).
+
+    Returns
+    -------
+    dict
+        Keys:
+        - ``name`` (str): function/method name
+        - ``params`` (list[str]): parameter strings, e.g. ``["x: int", "y"]``
+        - ``return_type`` (str): return annotation, e.g. ``"bool"``
+        - ``docblock`` (str): first docstring in the body
+        - ``is_async`` (bool): whether the function is ``async def``
+        - ``decorator_count`` (int): number of decorators
     """
     result: dict[str, Any] = {
         "name": "",
@@ -129,7 +169,30 @@ def _find_target_node(
     method_name: str,
     class_name: str | None,
 ) -> str | None:
-    """Locate the graph node ID for the target function or method."""
+    """Locate the graph node ID for the target function or method.
+
+    Searches the graph for a node whose ``name`` matches *method_name*,
+    whose ``node_type`` is ``"function"`` or ``"method"`` (or only
+    ``"method"`` if *class_name* is provided), and whose ``file_path``
+    suffix matches *source_file*.
+
+    Parameters
+    ----------
+    graph_db
+        An ``OrkaGraphDB`` instance with a populated ``graph`` attribute.
+    source_file
+        Absolute or relative path to the source file.
+    method_name
+        Name of the target function/method.
+    class_name
+        If provided, restricts search to ``"method"`` nodes only.
+
+    Returns
+    -------
+    str or None
+        The node ID (e.g. ``"Method:orka.core.compiler.PromptCompiler.compile"``)
+        or ``None`` if no matching node is found.
+    """
     target_types = ("function", "method") if not class_name else ("method",)
     for node, attrs in graph_db.graph.nodes(data=True):
         if attrs.get("node_type") not in target_types:
@@ -146,8 +209,21 @@ def _find_target_node(
 def _module_from_node_id(node_id: str) -> str | None:
     """Extract dotted module path from a graph node ID.
 
-    ``Function:orka.operations.helpers.load_template`` → ``orka.operations.helpers``
-    ``Method:orka.core.compiler.PromptCompiler.compile`` → ``orka.core.compiler``
+    Examples
+    --------
+    ``"Function:orka.operations.helpers.load_template"`` → ``"orka.operations.helpers"``
+    ``"Method:orka.core.compiler.PromptCompiler.compile"`` → ``"orka.core.compiler"``
+
+    Parameters
+    ----------
+    node_id
+        A graph node ID in the form ``"Type:module.path.name"``.
+
+    Returns
+    -------
+    str or None
+        The dotted module path, or ``None`` if the node ID format is
+        unrecognised.
     """
     if ":" not in node_id:
         return None
@@ -166,11 +242,32 @@ def _resolve_target_module(
 ) -> str | None:
     """Resolve the dotted module path for the target method/function.
 
-    Uses the graph DB first (by finding the target's node ID and extracting
-    the dotted module path), falls back to file-path heuristic.
+    Uses two strategies in order:
+
+    1. **Graph DB lookup** — finds the target's node ID via
+       :func:`_find_target_node` and extracts the module path from the
+       node ID via :func:`_module_from_node_id`.
+    2. **File-path heuristic** — strips the project root and ``.py``
+       extension from *source_file* and converts path separators to dots.
 
     Returns something like ``"orka.operations.controllers.compiler_node"``
-    or ``None`` if resolution fails.
+    or ``None`` if both strategies fail.
+
+    Parameters
+    ----------
+    source_file
+        Absolute or relative path to the source file.
+    method_name
+        Name of the target function/method.
+    class_name
+        Class name (or ``None`` for standalone functions).
+    graph_db
+        An open ``OrkaGraphDB`` instance (or ``None`` to skip strategy 1).
+
+    Returns
+    -------
+    str or None
+        The dotted module path, or ``None`` if resolution fails.
     """
     # Strategy 1: graph DB
     if graph_db is not None:
@@ -198,11 +295,28 @@ def _resolve_one_dependency(
 ) -> dict[str, str] | None:
     """Resolve a single callee name to its import path and module.
 
-    Searches namespace order:
-    1. Same module (sibling functions)
-    2. Graph nodes matching ``Function:{module}.{name}`` or
-       ``Class:{module}.{name}``
-    3. Falls back to unknown resolution
+    Searches in this order:
+
+    1. **Same module** — nodes whose ``name`` matches and whose module
+       (extracted from the node ID) equals *source_module*.
+    2. **Any module** — any graph node whose ``name`` matches.
+
+    Parameters
+    ----------
+    graph_db
+        An ``OrkaGraphDB`` instance with a populated ``graph``.
+    name
+        The function/class name to resolve.
+    source_module
+        The dotted module path of the caller (used for same-module
+        priority).
+
+    Returns
+    -------
+    dict or None
+        A record with keys ``name``, ``module``, ``import_path``,
+        ``node_type``, ``file_path``, ``lineno``, or ``None`` if no
+        matching node is found.
     """
     # Same-module candidates first
     for node, attrs in graph_db.graph.nodes(data=True):
@@ -248,14 +362,17 @@ def _build_dependency_map(
 ) -> list[dict[str, str]]:
     """Build a structured dependency map of functions/classes the target calls.
 
-    The dependency map is built from:
-    1. The graph DB's ``File → Module`` edges (imports the file makes).
-    2. Cross-referencing imported modules against known graph nodes.
-    3. For dependencies in the same module, resolution against sibling nodes.
-    4. Static overrides (``static_deps``) for dependencies that aren't in
-       the graph (e.g., private same-module functions).
+    The dependency map is built from three sources:
 
-    Each entry has keys: ``name``, ``module``, ``import_path``, ``node_type``.
+    1. **Static overrides** (*static_deps*) — caller-provided overrides
+       for dependencies that are known to be called but may not be in the
+       graph (e.g., private same-module helpers).
+    2. **Graph DB nodes** — every node in the graph whose type is
+       ``function``, ``method``, or ``class``, resolved via
+       :func:`_resolve_one_dependency`.
+
+    Each entry has keys: ``name``, ``module``, ``import_path``,
+    ``node_type``, ``file_path``, ``lineno``.
 
     Parameters
     ----------
@@ -276,6 +393,7 @@ def _build_dependency_map(
     -------
     list[dict]
         A list of structured dependency records, sorted by name.
+        Returns an empty list if *graph_db* is ``None``.
     """
     if graph_db is None:
         return []
@@ -322,11 +440,26 @@ def _build_caller_constraints(
 ) -> list[dict[str, str]]:
     """Build a structured list of callers that depend on the target.
 
-    Each entry has keys: ``name``, ``module``, ``import_path``,
-    ``file_path``, ``lineno``.
+    Uses the graph DB's predecessor edges to find every node that calls
+    the target.  Each entry has keys: ``name``, ``module``,
+    ``import_path``, ``file_path``, ``lineno``.
 
-    Returns an empty list if the target has no callers in the graph or
-    the graph DB is unavailable.
+    Parameters
+    ----------
+    source_file
+        Absolute or relative path to the source file.
+    method_name
+        Name of the target method/function.
+    class_name
+        Class name (or ``None`` for standalone functions).
+    graph_db
+        An open ``OrkaGraphDB`` instance (or ``None`` if unavailable).
+
+    Returns
+    -------
+    list[dict]
+        A list of caller records, or an empty list if the target has no
+        callers in the graph or the graph DB is unavailable.
     """
     if graph_db is None:
         return []
@@ -355,7 +488,19 @@ def _build_caller_constraints(
 def _render_dependency_map_table(deps: list[dict[str, str]]) -> str:
     """Render the dependency map as a compact markdown table.
 
-    Shows: Name, Import Path, Type.
+    Columns: Name, Import Path, Type.
+
+    Parameters
+    ----------
+    deps
+        A list of dependency records as returned by
+        :func:`_build_dependency_map`.
+
+    Returns
+    -------
+    str
+        A markdown table string, or ``"No resolvable dependencies found."``
+        if the list is empty.
     """
     if not deps:
         return "No resolvable dependencies found."
@@ -371,7 +516,19 @@ def _render_dependency_map_table(deps: list[dict[str, str]]) -> str:
 def _render_caller_constraints_table(callers: list[dict[str, str]]) -> str:
     """Render the caller constraints as a compact markdown table.
 
-    Shows: Caller, Import Path.
+    Columns: Caller, Import Path.
+
+    Parameters
+    ----------
+    callers
+        A list of caller records as returned by
+        :func:`_build_caller_constraints`.
+
+    Returns
+    -------
+    str
+        A markdown table string, or ``"No known callers in the internal graph."``
+        if the list is empty.
     """
     if not callers:
         return "No known callers in the internal graph."
@@ -390,8 +547,9 @@ def _render_caller_constraints_table(callers: list[dict[str, str]]) -> str:
 def execute(state: dict[str, Any]) -> dict[str, Any]:
     """Compile the prompt from gathered context and enriched analysis.
 
-    Steps
-    -----
+    This is the main node executor for the surgery graph.  It performs
+    the following steps in order:
+
     1. Load the template (``"refactor"`` or ``"test"``).
     2. Resolve injection rules for the template.
     3. Analyse the existing code signature (params, return type, docblock).
@@ -401,17 +559,28 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
        - a caller-constraints list
     5. Build enriched context data with all analysis results.
     6. Render the template via ``PromptCompiler.compile()``.
-    7. Return both the flat compiled string and structured sections.
+    7. Append similar examples (from ChromaDB) directly to the prompt.
+    8. Return both the flat compiled string and a structured sections dict.
 
     Parameters
     ----------
     state
-        The current :class:`~orka.operations.state.SurgeryState`.
+        The current :class:`~orka.operations.state.SurgeryState`.  Expected
+        keys include ``prompt_template_name``, ``source_file``,
+        ``method_name``, ``class_name``, ``existing_code``,
+        ``class_context``, ``requirements``, ``similar_examples``,
+        ``target_node_id``.
 
     Returns
     -------
     dict
-        Updated state keys: ``compiled_prompt``, ``compiled_prompt_sections``.
+        Updated state keys:
+        - ``compiled_prompt`` (str): the fully rendered prompt string.
+        - ``compiled_prompt_sections`` (dict): structured breakdown with
+          keys ``template_name``, ``rules_resolved``, ``signature``,
+          ``target_module``, ``target_import``, ``dependency_map``,
+          ``caller_constraints``, ``similar_examples_count``,
+          ``char_count``.
     """
     template_name = state["prompt_template_name"]
     source_file = state["source_file"]
