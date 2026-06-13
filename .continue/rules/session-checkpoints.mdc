@@ -1,0 +1,140 @@
+---
+description: When a significant iteration or milestone is completed, write a session checkpoint summary to /docs/ for future LLM context.
+globs: 
+---
+# Session Checkpoints — Writing Major Milestones to `docs/`
+
+## 1. When to Write a Checkpoint
+
+Write a checkpoint document when:
+
+- A **major feature** is completed (e.g., new controller, WebSocket contract, state machine refactor)
+- A **significant architecture decision** is made (e.g., pivot from framework tests to integration tests)
+- A **batch of files** is created/modified/deleted in a coherent effort (not individual edits)
+- You are about to **hand off to a new chat session** and need to preserve context
+- The user explicitly says "let's call this iteration done" or similar
+
+Do NOT write a checkpoint for:
+- Single-file edits or bug fixes
+- Exploration or dead ends
+- Trivial config changes
+
+## 2. Naming Convention
+
+Files go in `docs/checkpoints/` with the naming pattern:
+
+```
+YYYYMMDD_short_description.md
+```
+
+Examples from the project:
+- `docs/checkpoints/20260504_chat_workflow_prompt.md`
+- `docs/checkpoints/20260504_frontend_v2_prompt.md`
+- `docs/checkpoints/20260505_edit_flow_checkpoint.md`
+- `docs/checkpoints/20260506_llm_optimize_prompt.md`
+- `docs/checkpoints/20260508_testing_infrastructure_checkpoint.md`
+
+## 3. Format Template
+
+Use this structure. Keep it factual and scannable — not a verbatim conversation log.
+
+```markdown
+# {Project Name}: {Title of Milestone}
+**Date:** {Month Day, Year}
+**Phase:** {Brief phase descriptor}
+**Status:** {Complete / In Progress / Blocked}
+
+## 1. Context: Why This Session Happened
+
+This section is critical. A future reader (or LLM) has **zero conversation history**. Explain:
+
+- What **accumulating problems** or pain points triggered this session
+- What was the **state of the codebase** before this iteration (e.g., "tests were all mocks and 22 were failing," "JSON was leaking to the frontend")
+- What **strategic decision** kicked off the work (e.g., "the user decided to delete all framework tests and write real integration tests")
+- Any **alternatives considered and rejected** (e.g., "we considered fixing this at the frontend but decided the backend should enforce the contract")
+
+This is the most important section in the doc. Without it, the rest is just a changelog with no rationale.
+
+## 2. Architecture Decisions
+
+Key decisions made during this session. For each decision:
+- **Decision:** What we decided
+- **Rationale:** Why we chose this over alternatives (reference real tradeoffs)
+- **Tradeoffs accepted:** What we knowingly gave up
+
+If a decision had multiple alternatives that were seriously considered, list them and explain why each was rejected.
+
+## 3. Files Changed
+
+### Created
+| File | Purpose |
+|---|---|
+| `path/to/new_file.py` | Why it was created |
+
+### Modified
+| File | Key Changes |
+|---|---|
+| `path/to/existing_file.py` | What changed and why |
+
+### Deleted
+| File | Reason |
+|---|---|
+| `path/to/deleted_file.py` | Why it was removed |
+
+## 4. Active Design Patterns
+
+Key code patterns, schemas, or conventions established:
+- **Pattern 1:** Brief description — what problem does it solve?
+- **Pattern 2:** Brief description
+
+## 5. Outstanding Work / Next Steps
+
+- [ ] Thing to do next
+- [ ] Known issue or limitation
+```
+
+## 4. Content Rules
+
+- **No verbatim conversation logs.** Condense the dialogue into architectural facts.
+- **No long code blocks.** Summarize patterns; don't dump source code.
+- **Section 1 (Context) must explain the "before" state** — pain points, bugs, strategic decisions that kicked off the session. This is what makes the doc useful to future LLMs.
+- **Be honest about tradeoffs and rejected alternatives.** If a decision has downsides (e.g., "we chose speed over type safety") or if alternatives were considered and rejected, say so.
+- **File listing must be exhaustive** for files changed in this iteration. "Key changes" columns can abbreviate.
+
+## 5. Enforcement
+
+When a checkpoint-eligible milestone is reached:
+1. Identify the session's scope (files changed, decisions made)
+2. Write the doc following the template above
+3. Save to `docs/checkpoints/{YYYYMMDD}_{slug}.md`
+4. Reference the doc filename in your closing message so the user knows where to find it
+
+## 6. Update ARCHITECTURE.md and FLOW_CONTROL.md on Major Changes
+
+Whenever a session checkpoint is triggered by work that **changes the system's architecture** (new controllers, new state machine nodes, new WebSocket event types, new data flow paths, new service dependencies), you MUST also update `docs/ARCHITECTURE.md`.
+
+If the change involves **state machines, transactional flows, or LangGraph routing logic**, you MUST also update the corresponding Mermaid diagrams in `docs/FLOW_CONTROL.md`.
+
+**What counts as a major change:**
+
+- Adding/removing a LangGraph node or edge
+- Adding/removing a FastAPI endpoint or WebSocket channel
+- New Pydantic schemas that alter the API contract
+- New phase-specific data flow (e.g., a new compliance step in the architect pipeline)
+- New external service integration
+
+**What does NOT require an ARCHITECTURE.md update:**
+
+- Bug fixes that don't change the flow
+- Prompt tweaks
+- Timeout/config changes
+- Test-only additions without structural changes
+
+**How to update ARCHITECTURE.md and FLOW_CONTROL.md:**
+
+1. Read `docs/ARCHITECTURE.md` and `docs/FLOW_CONTROL.md` first.
+2. Update the ASCII architecture diagram if routing or pipeline changed.
+3. Add any new files to the file-role table.
+4. Update the data flow description if a new step was inserted.
+5. If updating `FLOW_CONTROL.md`, ensure the Mermaid.js syntax remains valid (`flowchart TD`, `stateDiagram-v2`, `sequenceDiagram`).
+6. Keep it scannable — don't bloat it with implementation details.

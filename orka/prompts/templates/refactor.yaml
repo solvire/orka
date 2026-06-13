@@ -66,6 +66,9 @@ user: |
 
   %%quality_gates%%
 
+  ### SIMILAR EXISTING CODE (for reference — observe patterns, do NOT copy):
+  %%similar_examples%%
+
   ### ADDITIONAL CONSTRAINTS:
   5. Do NOT add new methods, classes, or imports — only modify the body.
   6. Be LSP-aware: do not change method signature, return type, or

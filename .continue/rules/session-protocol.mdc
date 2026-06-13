@@ -1,0 +1,50 @@
+---
+description: Mandatory start-of-session checks
+globs: 
+---
+# Session Protocol
+
+## 1. Start of EVERY Session
+
+Read docs/ARCHITECTURE.md AND `docs/ROADMAP.md`
+
+Before ANY code changes:
+
+```bash
+cd /home/solvire/Documents/projects/kidecon/source/kidecon
+git branch --show-current
+git status --short
+git fetch --quiet
+git status -b
+```
+
+**If branch is behind remote:** `git pull --rebase`
+
+**If uncommitted changes:** Check if from interrupted session. Ask user.
+
+## 2. Update TEST_MANIFEST.md
+
+Whenever tests change, update TEST_MANIFEST.md.
+
+How: `grep "def test_" tests/test_*.py` -> update tables and total.
+
+## 3. Milestones & Documentation
+
+Write a checkpoint to `docs/checkpoints/YYYYMMDD_short_description.md` (see `session-checkpoints.mdc`).
+
+If flow control logic (state machines, transaction flows, LangGraph routing) was added or modified during the session, you MUST update the corresponding Mermaid diagrams in `docs/FLOW_CONTROL.md` as part of the session conclusion.
+
+## 4. Commit Hygiene
+
+- Coherent units of work
+- `git add -p` for selective staging
+- Descriptive messages
+- Push before session end if risk of abandonment
+
+## 5. Stuck?
+
+1. `git status`
+2. `make test-all`
+3. Check /docs/ checkpoints
+4. Ask user
+

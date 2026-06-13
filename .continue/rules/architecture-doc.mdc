@@ -1,0 +1,9 @@
+---
+description: Mandatory context: read ARCHITECTURE.md at session start.
+globs:
+---
+# Architecture Document Rule
+
+At session start, read `docs/ARCHITECTURE.md` to understand the full system layout (controllers, data flow, WebSocket contract, file responsibilities) before making any code changes.
+
+This is the canonical map of the system — FastAPI routes, LangGraph state machines, Pydantic schemas, and the architect pipeline data flow.

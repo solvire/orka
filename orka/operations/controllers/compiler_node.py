@@ -185,9 +185,19 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
        - a dependency map of every reachable function/class
        - a caller-constraints list
     5. Build enriched context data with all analysis results.
-    6. Render the template via ``PromptCompiler.compile()``.
-    7. Append similar examples (from ChromaDB) directly to the prompt.
-    8. Return both the flat compiled string and a structured sections dict.
+    6. Render the template via ``PromptCompiler.compile()`` (similar
+       examples are rendered inline via ``%%similar_examples%%``).
+    7. Return both the flat compiled string and a structured sections dict.
+
+    .. note:: Prompt ordering (Completion Trap fix)
+       Similar examples from ChromaDB are injected *inside* the template
+       (above the final output instruction) via ``%%similar_examples%%``.
+       This prevents the LLM from treating trailing example code as the
+       generation anchor.
+
+    .. note:: Context Redundancy fix
+       When rich ``dependency_signatures`` are available, the basic
+       ``dependency_map`` table is suppressed to avoid token bloat.
 
     Parameters
     ----------
@@ -306,6 +316,23 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
         signature_context = "Signature info: " + "; ".join(sig_context_parts)
 
     # Core context for the template placeholders
+
+    # ── Directive 2: Context Redundancy — conditional dependency map ───
+    # If rich internal dependency signatures are available, suppress the
+    # basic dependency-map table to avoid token bloat and attention dilution.
+    has_rich_deps = bool(dependency_signatures and dependency_signatures.strip())
+    effective_dep_map = "" if has_rich_deps else render_dependency_map_table(dep_map)
+
+    # ── Directive 1: Completion Trap — render examples inside template ─
+    # Format similar examples for inline rendering via %%similar_examples%%.
+    # This ensures they appear ABOVE the final output instruction in the
+    # template, not appended after it (which would cause the LLM to
+    # generate example-like code instead of following the action trigger).
+    if similar_examples:
+        similar_examples_text = "\n---\n".join(similar_examples[:3])
+    else:
+        similar_examples_text = "No similar examples found."
+
     context_data: dict[str, str] = {
         "existing_code": existing_code,
         "class_context": class_context,
@@ -316,26 +343,15 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
         "target_import": target_import,
         "target_module": target_module or "",
         "target_name": sig.get("name", ""),
-        "dependency_map": render_dependency_map_table(dep_map),
+        "dependency_map": effective_dep_map,
         "caller_constraints": render_caller_constraints_table(caller_constraints),
         "dependency_signatures": dependency_signatures,
+        "similar_examples": similar_examples_text,
     }
 
     # ── 8. Compile ────────────────────────────────────────────────────
     compiler = PromptCompiler()
     compiled_prompt = compiler.compile(template, resolved_rules, context_data)
-
-    # Append similar examples (not in template — appended directly)
-    extra_sections: list[str] = []
-
-    if similar_examples:
-        extra_sections.append(
-            "### SIMILAR EXISTING CODE (for reference):\n"
-            + "\n---\n".join(similar_examples[:3])
-        )
-
-    if extra_sections:
-        compiled_prompt += "\n\n" + "\n\n".join(extra_sections)
 
     # ── 9. Build structured sections for introspection ─────────────────
     sections: dict[str, Any] = {

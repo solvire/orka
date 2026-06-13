@@ -80,6 +80,9 @@ user: |
 
   %%style_guide%%
 
+  ### SIMILAR EXISTING TESTS (for reference — observe patterns, do NOT copy):
+  %%similar_examples%%
+
   ### ADDITIONAL CONSTRAINTS:
   7. Use ``tmp_path`` (pytest built-in fixture) for any filesystem tests.
      Do NOT use ``tmpdir`` (deprecated) or ``tempfile``.

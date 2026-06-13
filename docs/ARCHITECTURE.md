@@ -160,6 +160,29 @@ Rules are sorted by `(priority, -tier, name)` for deterministic output.
 The compiler enforces a 4000-character budget for all rule text combined.
 When exceeded, the lowest-priority rules are dropped first, with a log warning.
 
+### Prompt layout principles
+
+The surgery graph enforces strict ordering in compiled prompts to prevent
+LLM generation drift:
+
+1. **Context data always precedes action triggers.** `similar_examples`
+   from ChromaDB are rendered inline via `%%similar_examples%%` above the
+   final output instruction (e.g., `### SYNTHESIZED BODY LOGIC`). This
+   prevents the LLM from treating trailing example code as the generation
+   anchor (the "Completion Trap").
+
+2. **Conditional rendering avoids token bloat.** When rich
+   `dependency_signatures` (full signatures + docstrings from Graph DB)
+   are available, the basic `dependency_map` table (import paths only)
+   is suppressed to avoid rendering the same information twice. This
+   logic lives in `compiler_node.py` before passing values into
+   `context_data` (the `%%var%%` engine has no conditionals).
+
+3. **Draft preservation.** The generator node saves `original_draft_code`
+   (the LLM's first output, post-sanitization) separately from
+   `draft_snippet` (the current working draft). This gives the fixer a
+   baseline of the LLM's original intent.
+
 ### Key schemas (`templates.py`)
 
 - `PromptTemplate` — YAML-loaded Jinja2 template with injection points

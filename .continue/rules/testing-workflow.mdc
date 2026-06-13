@@ -1,0 +1,167 @@
+---
+description: Testing workflow for Django integration tests — when to write them, how to structure them, and the bootstrap pattern.
+globs:
+---
+# Testing & Development Workflow
+
+## 1. Bootstrap Pattern
+
+Every test file that interacts with Django models/DB MUST use pytest-django:
+
+```python
+import pytest
+```
+
+For tests that make HTTP requests to the Django app:
+
+```python
+import pytest
+
+
+@pytest.fixture
+def api_client():
+    from rest_framework.test import APIClient
+    return APIClient()
+
+
+@pytest.fixture
+def authenticated_client(api_client, django_user_model):
+    user = django_user_model.objects.create_user(
+        username="testuser", password="testpass123"
+    )
+    api_client.force_authenticate(user=user)
+    return api_client
+```
+
+## 2. Virtual Environment
+
+```bash
+cd ~/Documents/projects/kidecon/source/kidecon
+source env/bin/activate
+```
+
+Running tests:
+
+```bash
+# All tests
+python -m pytest tests/ -v --tb=short
+
+# Single test file
+python -m pytest tests/test_onboarding.py -v --tb=short
+
+# With coverage
+python -m pytest tests/ --cov=kidecon -v --tb=short
+```
+
+## 3. When to Write Tests
+
+Write tests **before** implementing new features (red-green-refactor) when changing:
+
+| Change Type | Test Required? | What to Test |
+|---|---|---|
+| New Django view / API endpoint | ✅ Yes | Response status codes, redirects, permission checks |
+| New serializer | ✅ Yes | Validation rules, error messages, edge cases (empty, invalid, boundary) |
+| New validator function | ✅ Yes | Each validator as a pure function test |
+| New model method / property | ✅ Yes | Return values, edge cases |
+| New helper function | ✅ Yes | Input/output contract, error handling |
+| New template | ❌ No (unless it has complex logic) | Template rendering via `django.template.loader` |
+| Changes to auth/permissions | ✅ Yes | Unauthenticated, wrong role, correct role scenarios |
+| Bug fix | ✅ Yes | A test that reproduces the bug, then verify it's fixed |
+| Refactoring without behavior change | ❌ No | Existing tests cover it |
+| CSS/JS frontend changes | ❌ No | |
+
+## 4. Test Philosophy
+
+**Write real integration tests, not mocks.**
+
+For Django apps, "real" means:
+
+| ✅ Do This | ❌ Don't Do This |
+|---|---|
+| Create real Django `User` objects in the DB | Mock `User.objects.create_user` |
+| Use `rest_framework.test.APIClient` to hit real URL patterns | Mock `request.POST` |
+| Assert on response JSON structure and HTTP status codes | Assert on intermediate serializer internals |
+| Test validators as pure functions with real inputs | Mock the validator |
+| Test the signal handler fires and creates the expected DB object | Mock the signal |
+| Use `django.test.override_settings` for email backend, etc. | Mock `send_mail` |
+| Use pytest-django's `db` marker for DB access | Mock the database |
+
+Why real DB/serializers/views? The main failure modes are:
+- Migration changes breaking a query you thought was safe
+- Permission checks returning wrong booleans
+- Validation rules not firing for edge cases (empty strings, nulls, boundary dates)
+- Serializer field mappings drifting from model fields
+- URL reversal failing after a URL structure change
+
+Mocks would never catch these — real DB + HTTP requests are the only way.
+
+## 5. Adding New Tests (Red-Green-Refactor)
+
+1. Write the test **first** with `@pytest.mark.skip` — describe the expected behavior
+2. Remove the skip, run it — it will fail (red)
+3. Implement the logic — the test passes (green)
+4. Run the full test suite — verify nothing else broke
+5. **ALWAYS update `tests/TEST_MANIFEST.md`** when adding or removing tests (add a row for the new file)
+
+Test files are split by domain. Add your test to the correct file:
+
+| File | When to Add Here |
+|---|---|
+| `tests/test_onboarding.py` | Onboarding wizard API views, serializers, validators |
+| `tests/test_notifications.py` | Notification creation, email sending, Discord DM |
+| `tests/test_tribes.py` | Tribe creation, membership, join requests |
+| `tests/test_market.py` | Contracts, vendors, catalog, orders |
+| `tests/test_discord.py` | Discord verification flow |
+| `tests/test_avatars.py` | Avatar generation, DiceBear helper, selfies |
+| `tests/test_auth.py` | Login, signup, password reset, permissions |
+
+## 6. Fixing Broken Tests
+
+If a test fails:
+1. **Don't change the test** — it encodes the expected contract
+2. Fix the backend code to match the contract
+3. If the contract genuinely needs to change (e.g., new business rule), update **both** the test and the implementation in the same commit
+4. Run the full suite to verify
+
+## 7. Test File Structure Reference
+
+See `tests/TEST_MANIFEST.md` for the complete, authoritative listing of all tests.
+
+## 8. Conftest Pattern
+
+Create `tests/conftest.py` for shared fixtures:
+
+```python
+import pytest
+
+
+@pytest.fixture
+def api_client():
+    from rest_framework.test import APIClient
+    return APIClient()
+
+
+@pytest.fixture
+def user(django_user_model):
+    return django_user_model.objects.create_user(
+        username="testchief",
+        password="testpass123",
+        first_name="Test",
+        last_name="Chief",
+    )
+
+
+@pytest.fixture
+def authenticated_client(api_client, user):
+    api_client.force_authenticate(user=user)
+    return api_client
+```
+
+## TEST COMMAND EXECUTION CONSTRAINTS
+
+When writing the `- **Test Command**:` field in an execution blueprint, you are strictly FORBIDDEN from using bash/shell operators such as `&&`, `||`, `;`, or `|`. 
+The Python orchestrator executes this string directly via `subprocess.run(shell=False)`, which will fail if it encounters shell operators.
+
+**BAD:** `python -m py_compile file1.py && python -m pytest file2.py`
+**GOOD (Multiple files):** `python -m py_compile file1.py file2.py`
+**GOOD (Pytest multiple):** `python -m pytest file1.py file2.py -v`
