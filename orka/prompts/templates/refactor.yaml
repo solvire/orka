@@ -24,13 +24,32 @@ user: |
   3. DO NOT wrap the output in markdown code blocks like ```python.
   4. Return ONLY valid Python code at the base indentation level (0 spaces).
 
+  ### LEGEND — How to read the structured data below
+  ```
+  CALLER CONSTRAINTS  Every function/method/class that calls the target.
+                      Their import paths and file locations are shown.
+                      You MUST NOT change the target's signature or return
+                      type — these callers depend on the current contract.
+
+  DEPENDENCY MAP      Every function/method/class reachable from the
+                      target's file, with its *exact* import path.
+                      Useful when the new logic needs to call existing
+                      project functions — copy the path from the table.
+  ```
+
   %%constraints_top%%
 
-  ### GRAPH DEPENDENCY CONSTRAINTS (DO NOT BREAK THESE):
-  %%graph_constraints%%
+  ### CALLER CONSTRAINTS (DO NOT BREAK THESE — these depend on the target):
+  %%caller_constraints%%
+
+  ### DEPENDENCY MAP (use these exact import paths in new logic):
+  %%dependency_map%%
 
   ### CLASS CONTEXT:
   %%class_context%%
+
+  ### INTERNAL DEPENDENCIES AVAILABLE (use these exact signatures):
+  %%dependency_signatures%%
 
   ### EXISTING METHOD SIGNATURE & CODE:
   ```python

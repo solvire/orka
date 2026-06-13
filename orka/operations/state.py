@@ -71,6 +71,12 @@ class SurgeryState(TypedDict):
     similar_examples: list[str]
     """Up to 3 semantically similar tests or code examples from ChromaDB."""
 
+    dependency_signatures: str
+    """Formatted signatures & docstrings of the target's 1st-degree
+    outbound dependencies (functions/classes called or instantiated
+    by the target). Empty string if no dependencies found in the
+    graph DB. Populated by ``gather_context``."""
+
     original_file_backup: Optional[str]
     """Backup of target_output_file before any writes. None if file didn't exist."""
 
@@ -109,3 +115,4 @@ class SurgeryState(TypedDict):
 
     fatal_error: Optional[str]
     """If set, the pipeline aborts immediately with this error message."""
+

@@ -320,6 +320,52 @@ class OrkaClientFactory:
         )
 
 
+    @classmethod
+    def check_provider_health(cls, provider: str) -> dict:
+        """
+        Perform a lightweight health check for *provider*.
+
+        Sends a minimal prompt and reports whether the API is reachable
+        and the model responds.
+
+        Parameters
+        ----------
+        provider
+            One of the supported provider names.
+
+        Returns
+        -------
+        dict
+            ``{"alive": bool, "error": str | None, "latency_ms": float}``
+        """
+        import time
+
+        start = time.perf_counter()
+        try:
+            # Use "fast" tier for health checks to minimize cost
+            client = cls.create(provider=provider, model_tier="fast")
+            from langchain_core.messages import HumanMessage
+
+            response = client.invoke([HumanMessage(content="Respond with exactly one word: ok")])
+            latency = (time.perf_counter() - start) * 1000
+
+            content = response.content.strip().lower() if hasattr(response, "content") else ""
+            alive = "ok" in content
+
+            return {
+                "alive": alive,
+                "error": None if alive else f"Unexpected response: {response.content[:100]!r}",
+                "latency_ms": round(latency, 1),
+            }
+        except Exception as e:
+            latency = (time.perf_counter() - start) * 1000
+            return {
+                "alive": False,
+                "error": str(e),
+                "latency_ms": round(latency, 1),
+            }
+
+
 # ===================================================================
 # Convenience wrapper (backward compatible name)
 # ===================================================================

@@ -29,10 +29,39 @@ user: |
      automatically.
   6. Include docstrings on each test function explaining the scenario.
 
+  ### LEGEND — How to read the structured data below
+  ```
+  TARGET IMPORT     The exact ``from ... import ...`` that the framework
+                    will prepend.  Reference this name directly in tests.
+
+  DEPENDENCY MAP    Every function/method/class reachable from the target's
+                    file, with its *exact* import path.  When you need to
+                    mock a dependency, copy the path from the table —
+                    never guess relative imports.
+
+  CALLER CONSTRAINTS Functions that depend on the target.  If the target
+                     is called in production, these tell you what callers
+                     expect — useful for understanding return types.
+  ```
+
   %%constraints_top%%
+
+  ### TARGET IMPORT (automatically prepended):
+  ```
+  %%target_import%%
+  ```
+
+  ### DEPENDENCY MAP (use these paths for mocking):
+  %%dependency_map%%
+
+  ### CALLER CONSTRAINTS (these depend on the target):
+  %%caller_constraints%%
 
   ### CLASS CONTEXT (for understanding the class structure):
   %%class_context%%
+
+  ### INTERNAL DEPENDENCIES AVAILABLE (use these exact signatures for mocking):
+  %%dependency_signatures%%
 
   ### SOURCE FILE:
   %%file_path%%
@@ -61,3 +90,4 @@ user: |
       variables or fixtures that are not built-in.
 
   ### PYTHON TEST FUNCTIONS (RAW PYTHON ONLY):
+

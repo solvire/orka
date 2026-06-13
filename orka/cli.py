@@ -20,11 +20,12 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 from rich.console import Console
 
+from orka.clients import OrkaClientFactory
 from orka.config import settings
 from orka.core.ingester import OrkaGraphDB
 from orka.surgery.transplanter import transplant_class
@@ -690,6 +691,24 @@ def doctor(
         except Exception:
             report["last_scan"] = None
 
+        # ── Health checks ────────────────────────────────────────────
+        console.print("[dim]Running provider health checks...[/dim]")
+        health_results = {}
+        provider_key_map = {
+            "openai": settings.OPENAI_API_KEY,
+            "deepseek": settings.DEEPSEEK_API_KEY,
+            "together_ai": settings.TOGETHER_API_KEY,
+            "gemini": settings.GEMINI_API_KEY,
+            "anthropic": settings.ANTHROPIC_API_KEY,
+            "openai_compat": settings.API_KEY,
+        }
+        for prov, key in provider_key_map.items():
+            if key:
+                health_results[prov] = OrkaClientFactory.check_provider_health(prov)
+            else:
+                health_results[prov] = {"alive": False, "error": "No API key configured", "latency_ms": 0.0}
+        report["health_checks"] = health_results
+
         _emit_json(report)
         return
 
@@ -733,6 +752,36 @@ def doctor(
             console.print("[dim]Graph database exists but could not be read.[/dim]")
     else:
         console.print("[dim]No graph database found — run [bold]orka scan[/bold] to build it.[/dim]")
+    console.print()
+
+    # 5. Provider health checks
+    console.print("[bold]Provider Health Checks:[/bold]")
+    provider_key_map = {
+        "openai": settings.OPENAI_API_KEY,
+        "deepseek": settings.DEEPSEEK_API_KEY,
+        "together_ai": settings.TOGETHER_API_KEY,
+        "gemini": settings.GEMINI_API_KEY,
+        "anthropic": settings.ANTHROPIC_API_KEY,
+        "openai_compat": settings.API_KEY,
+    }
+
+    configured_providers = [(prov, key) for prov, key in provider_key_map.items() if key]
+    if not configured_providers:
+        console.print("  [dim]No API keys configured — run [bold]orka init[/bold] or set environment variables.[/dim]")
+    else:
+        console.print(f"  [dim]Testing {len(configured_providers)} configured provider(s)...[/dim]")
+        for prov, key in configured_providers:
+            result = OrkaClientFactory.check_provider_health(prov)
+            if result["alive"]:
+                console.print(
+                    f"  [bold green]✓[/bold green] {prov:20s} "
+                    f"[dim]({result['latency_ms']:.0f}ms)[/dim]"
+                )
+            else:
+                console.print(
+                    f"  [bold red]✗[/bold red] {prov:20s} "
+                    f"[dim]{result['error'][:60]}[/dim]"
+                )
 
 
 # ---------------------------------------------------------------------------

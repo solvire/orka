@@ -237,6 +237,7 @@ def run_surgery(
         "existing_code": "",
         "class_context": "",
         "similar_examples": [],
+        "dependency_signatures": "",
         "original_file_backup": None,
         # Compiled prompt
         "compiled_prompt": "",
