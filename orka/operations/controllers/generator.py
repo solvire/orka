@@ -9,11 +9,11 @@ The prompt is pre-compiled by the ``compile_prompt`` node and stored in
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 from orka.clients import OrkaLangChainClient
 from orka.config import settings
+from orka.core.snippet_utils import sanitize_llm_output
 from orka.core.validator import validate_code_snippet
 
 logger = logging.getLogger(__name__)
@@ -23,48 +23,12 @@ logger = logging.getLogger(__name__)
 # Sanitization pipeline — multi-pass cleaning of untrusted LLM output
 # ═══════════════════════════════════════════════════════════════════════
 
-_PREAMBLE_PATTERNS = [
-    re.compile(
-        r"^(?:here(?:'s| is)\s+(?:the\s+)?(?:code|implementation|solution|"
-        r"refactored\s+(?:code|body|method|function))[:\.\-]?\s*\n)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^(?:sure[,\s!]+(?:here(?:'s| is)\s+)?(?:the\s+)?(?:code|"
-        r"implementation)[:\.\-]?\s*\n)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^(?:certainly[,\s!]+(?:here(?:'s| is)\s+)?(?:the\s+)?(?:code)[:\.\-]?\s*\n)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"^(?:below\s+is\s+(?:the\s+)?(?:code|implementation|refactored\s+code)[:\.\-]?\s*\n)",
-        re.IGNORECASE,
-    ),
-]
-
-_CODE_LINE_STARTERS = (
-    "def ", "class ", "if ", "for ", "while ", "return ", "raise ",
-    "import ", "from ", "try:", "try :", "except", "with ", "elif",
-    "else:", "yield ", "assert ", "pass", "break", "continue",
-    "#", "@", '"""', "'''", ")", "]", "}", "print(", "self.",
-    "logger.", "result", "return", "    ", "\t",
-)
 
 
 def _sanitize_llm_output(raw: str) -> str:
     """Multi-pass sanitization of untrusted LLM output.
 
-    LLMs violate "RAW PYTHON ONLY" instructions in predictable ways.
-    This function handles each failure mode in sequence:
-
-    1. **Fence extraction** — Remove ```python ... ``` wrappers.
-       Handles single blocks, multiple blocks (keeps largest), and
-       unclosed fences.
-    2. **Preamble removal** — Strip "Here's the code:" etc. before code.
-    3. **Trailing prose removal** — Strip explanations after the code.
-    4. **Whitespace normalization** — Collapse 3+ consecutive blank lines.
+    Delegates to :func:`orka.core.snippet_utils.sanitize_llm_output`.
 
     Parameters
     ----------
@@ -76,73 +40,7 @@ def _sanitize_llm_output(raw: str) -> str:
     str
         Cleaned Python code. May be empty if nothing recoverable was found.
     """
-    if not raw or not raw.strip():
-        return ""
-
-    text = raw.strip()
-
-    # ── Pass 1: Detect and extract fenced code blocks ────────────────
-    fence_pattern = re.compile(
-        r"```(?:python|py)?\s*\n(.*?)```",
-        re.DOTALL,
-    )
-    fenced_blocks = fence_pattern.findall(text)
-
-    if fenced_blocks:
-        if len(fenced_blocks) == 1:
-            text = fenced_blocks[0].strip()
-        else:
-            largest = max(fenced_blocks, key=len)
-            logger.warning(
-                "LLM emitted %d code blocks — extracted largest (%d chars)",
-                len(fenced_blocks),
-                len(largest),
-            )
-            text = largest.strip()
-    else:
-        # No complete fences — check for an unclosed opening fence
-        unclosed = re.match(r"^```(?:python|py)?\s*\n", text)
-        if unclosed:
-            text = text[unclosed.end():].strip()
-
-    # ── Pass 2: Strip preamble text before the code ──────────────────
-    for pattern in _PREAMBLE_PATTERNS:
-        text = pattern.sub("", text)
-    text = text.strip()
-
-    # ── Pass 3: Strip trailing prose after the code ──────────────────
-    # Walk backwards from the end, skipping blank and comment-only lines.
-    # Find the last line that looks like actual Python code.
-    # If we find a non-code line (prose) at the end, strip it.
-    lines = text.split("\n")
-    last_code_line = -1
-    trailing_prose_lines: list[str] = []
-    for i in range(len(lines) - 1, -1, -1):
-        stripped = lines[i].strip()
-        if not stripped:
-            continue
-        if stripped.startswith("#"):
-            continue
-        # Check if this line looks like actual code vs prose
-        if any(stripped.startswith(s) for s in _CODE_LINE_STARTERS):
-            last_code_line = i
-            break
-        else:
-            # This line is non-blank, non-comment, non-code — probably prose
-            trailing_prose_lines.insert(0, lines[i])
-
-    if trailing_prose_lines:
-        logger.debug(
-            "Stripped trailing prose (%d lines): %s",
-            len(trailing_prose_lines),
-            " ".join(l.strip()[:60] for l in trailing_prose_lines),
-        )
-        text = "\n".join(lines[:last_code_line + 1]) if last_code_line >= 0 else ""
-
-    # ── Pass 4: Collapse excessive blank lines ───────────────────────
-    text = re.sub(r"\n{3,}", "\n\n", text)
-
-    return text.strip()
+    return sanitize_llm_output(raw)
 
 
 def execute(state: dict[str, Any]) -> dict[str, Any]:
@@ -219,8 +117,6 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
 
     # ── 3. Multi-pass sanitization pipeline ───────────────────────────
     draft_snippet = _sanitize_llm_output(raw_output)
-    # Final safety net — strip any remaining fences the multi-pass missed
-    draft_snippet = OrkaLangChainClient.fix_md_fences(draft_snippet)
 
     if not draft_snippet:
         logger.error(

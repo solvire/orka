@@ -17,6 +17,7 @@ import textwrap
 from typing import Optional
 
 import libcst as cst
+from orka.core.snippet_utils import sanitize_llm_output
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -62,6 +63,23 @@ class MethodBodyReplacer(cst.CSTTransformer):
         self.new_body_node = parse_snippet_to_cst_body(new_body_source)
         self.modification_successful = False
 
+    @staticmethod
+    def _extract_docstring_node(body_node: cst.IndentedBlock) -> Optional[cst.BaseStatement]:
+        """Return the first statement if it is a docstring (string literal), else None."""
+        if not body_node.body:
+            return None
+        first_stmt = body_node.body[0]
+        # Check if it's a simple statement containing an expression that is a string
+        if isinstance(first_stmt, cst.SimpleStatementLine):
+            # A docstring is typically a single Expr statement with a string constant
+            if len(first_stmt.body) == 1:
+                expr = first_stmt.body[0]
+                if isinstance(expr, cst.Expr):
+                    val = expr.value
+                    if isinstance(val, (cst.SimpleString, cst.ConcatenatedString)):
+                        return first_stmt
+        return None
+
     # ── Class entry/exit ────────────────────────────────────────────
 
     def visit_ClassDef(self, node: cst.ClassDef) -> bool | None:
@@ -85,15 +103,33 @@ class MethodBodyReplacer(cst.CSTTransformer):
         # For standalone functions (no target_class): match at module level
         if not self._class_stack:
             self.modification_successful = True
-            return updated_node.with_changes(body=self.new_body_node)
+            return self._apply_with_docstring_preservation(original_node, updated_node)
 
         # For class methods: match only when the current depth exactly
         # matches the target class hierarchy
         if self._current_depth == self._class_stack:
             self.modification_successful = True
-            return updated_node.with_changes(body=self.new_body_node)
+            return self._apply_with_docstring_preservation(original_node, updated_node)
 
         return updated_node
+
+    def _apply_with_docstring_preservation(
+        self,
+        original_node: cst.FunctionDef,
+        updated_node: cst.FunctionDef,
+    ) -> cst.FunctionDef:
+        """Apply body replacement, preserving the original docstring if missing in new body."""
+        original_docstring = self._extract_docstring_node(original_node.body)
+        new_docstring = self._extract_docstring_node(self.new_body_node)
+
+        if original_docstring is not None and new_docstring is None:
+            # Prepend the original docstring to the new body
+            preserved_body = self.new_body_node.with_changes(
+                body=(original_docstring,) + self.new_body_node.body
+            )
+            return updated_node.with_changes(body=preserved_body)
+
+        return updated_node.with_changes(body=self.new_body_node)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -104,12 +140,8 @@ class MethodBodyReplacer(cst.CSTTransformer):
 def parse_snippet_to_cst_body(llm_snippet: str) -> cst.IndentedBlock:
     """Parse raw LLM code into a LibCST ``IndentedBlock`` ready for injection.
 
-    Handles three things the old ``MethodBodyReplacer`` logic did not:
-    1. Strips markdown fences (`` ```python `` / `` ``` ``).
-    2. Wraps body-level code in a dummy function so LibCST can handle
-       bare statements like ``return x``.
-    3. Catches :class:`cst.ParserSyntaxError` and raises ``ValueError``
-       **before** any surgery attempt.
+    Delegates markdown fence stripping and indentation normalization to
+    :func:`orka.core.snippet_utils.sanitize_llm_output`.
 
     Parameters
     ----------
@@ -127,32 +159,14 @@ def parse_snippet_to_cst_body(llm_snippet: str) -> cst.IndentedBlock:
     ValueError
         If the snippet is empty, syntactically invalid, or cannot be parsed.
     """
-    # ── 1. Strip markdown fences ────────────────────────────────────
-    cleaned = llm_snippet.strip()
+    # ── 1. Centralized sanitization ─────────────────────────────────
+    cleaned = sanitize_llm_output(llm_snippet)
     if not cleaned:
-        raise ValueError("LLM snippet is empty.")
+        raise ValueError("LLM snippet is empty after sanitization.")
 
-    # Remove opening fence (e.g. ```python or ```)
-    if cleaned.startswith("```"):
-        first_newline = cleaned.find("\n")
-        if first_newline != -1:
-            cleaned = cleaned[first_newline + 1 :]
-        else:
-            # Only the fence itself — treat as empty
-            raise ValueError("LLM snippet is empty (only a markdown fence).")
-
-    # Remove closing fence
-    if cleaned.endswith("```"):
-        cleaned = cleaned[:-3]
-
-    cleaned = cleaned.strip()
-
-    # ── 2. Normalise indentation ────────────────────────────────────
-    cleaned = textwrap.dedent(cleaned).strip()
-    if not cleaned:
-        raise ValueError("LLM snippet is empty after stripping fences and whitespace.")
-
-    # ── 3. Wrap in dummy function and parse ─────────────────────────
+    # ── 2. Wrap in dummy function and parse ─────────────────────────
+    # Use 4-space indent for the dummy wrap — LibCST will normalise the
+    # depth to match the target method automatically.
     indented = textwrap.indent(cleaned, "    ")
     dummy_code = f"def __orka_dummy():\n{indented}\n"
 
@@ -163,7 +177,7 @@ def parse_snippet_to_cst_body(llm_snippet: str) -> cst.IndentedBlock:
             f"LLM snippet contains invalid Python syntax: {e}"
         ) from e
 
-    # ── 4. Extract the IndentedBlock of the dummy function ──────────
+    # ── 3. Extract the IndentedBlock of the dummy function ──────────
     dummy_func: cst.FunctionDef = module.body[0]  # type: ignore[assignment]
     return dummy_func.body
 

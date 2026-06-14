@@ -30,10 +30,11 @@ orka/
       rule_resolver.py (.mdc rule parser + three-tier resolution)
       import_fixer.py (Deterministic import generation for test files)
       init_helper.py  (One-time init: .env, .orka/, Continue.dev rules)
+      snippet_utils.py (LLM output sanitization: strip_md_fences, normalize_snippet_indent, sanitize_llm_output)
     surgery/
       __init__.py
       analyzer.py     (dependency scope analysis)
-      modifier.py     (LibCST method body replacement + preview_patch)
+      modifier.py     (LibCST method body replacement + preview_patch; consumes snippet_utils.parse_snippet_to_cst_body)
       synthesizer.py  (Legacy prompt builders — being replaced)
       transplanter.py (class extraction + import healing)
     operations/
@@ -62,6 +63,7 @@ orka/
           use_pytest_raises.mdc        (priority 30, applies to test)
           test_behavior_not_mocks.mdc  (priority 30, applies to test)
     tests/
+      TEST_MANIFEST.md
       test_validator.py
       test_standalone_function.py
       test_refactor_result.py
@@ -73,6 +75,7 @@ orka/
       test_orka_edge_cases.py
       test_orka_synthesizer.py
       test_orka_transplanter.py
+      test_snippet_utils.py  (24 tests: strip_md_fences, normalize_snippet_indent, sanitize_llm_output)
       ...
 ```
 
@@ -110,7 +113,7 @@ flowchart TD
 |------|------|-----------|-------------|
 | `gather_context` | `controllers/context.py` | Fast LLM (HyDE) | Extract source, generate semantic query, search ChromaDB, backup file |
 | `compile_prompt` | `controllers/compiler_node.py` | No | Signature analysis, graph enrichment, template rendering with `%%var%%` |
-| `generate_draft` | `controllers/generator.py` | Yes (smart) | Invoke LLM with compiled prompt, multi-pass sanitization |
+| `generate_draft` | `controllers/generator.py` | Yes (smart) | Invoke LLM with compiled prompt, multi-pass sanitization via `snippet_utils.sanitize_llm_output` |
 | `validate_draft` | `controllers/validator.py` | No | 4-gate validation: snippet AST, assembly, file AST, pytest |
 | `fix_draft` | `controllers/fixer.py` | Yes (smart) | Fix failing draft with validation error context |
 

@@ -44,14 +44,17 @@ stateDiagram-v2
 
 ### generate_draft
 - Send `compiled_prompt` to LLM
-- Sanitize response via `fix_md_fences()` (strip markdown code blocks)
+- Multi-pass sanitization via `snippet_utils.sanitize_llm_output()` (strips fences, dedents, removes preamble/postscript, normalizes whitespace)
 - Save to both `draft_snippet` and `original_draft_code` (baseline preservation)
+- If sanitization yields empty string, set `fatal_error` and abort
 - Increment `iteration_count`
 
 ### validate_draft
-- **Gate 1:** AST parse validation via `validate_code_snippet()`
-- **Gate 2:** Pytest validation (if `test_file_target` set)
-- Populate `validation_output` and `is_valid`
+- **Gate 1:** Snippet AST — `ast.parse` on the snippet alone (wrapped in dummy function)
+- **Gate 2:** Assembly — LibCST patch into source (refactor) or `resolve_import` + assembly (testgen)
+- **Gate 3:** File AST — `ast.parse` on the fully assembled file
+- **Gate 4:** Disk write + pytest — write to real path, run `pytest --exitfirst --tb=short`, truncate output
+- Populate `draft_file_content`, `validation_output`, and `is_valid`
 - Set `fatal_error` if unrecoverable
 
 ### fix_draft
@@ -84,8 +87,20 @@ flowchart TD
     
     J --> K[generate_draft]
     K --> L[LLM response]
-    L --> M[fix_md_fences]
+    L --> M[sanitize_llm_output]
     M --> N[draft_snippet + original_draft_code]
+    
+    N --> O[validate_draft]
+    O --> P{Gate 1: snippet AST}
+    P -->|pass| Q{Gate 2: assembly}
+    Q -->|refactor| R[preview_patch → parse_snippet_to_cst_body]
+    Q -->|testgen| S[resolve_import + assembly]
+    R --> T{draft_file_content}
+    S --> T
+    T --> U{Gate 3: file AST}
+    U -->|pass| V{Gate 4: pytest}
+    V -->|pass| W[is_valid = true]
+    V -->|fail| X[truncated error → fix_draft]
 ```
 
 ## Routing Logic (validate_draft → end | fix_draft)
