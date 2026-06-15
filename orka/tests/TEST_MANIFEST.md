@@ -2,6 +2,18 @@
 
 > Auto-generated. Updated when tests are added or changed.
 
+## Test E2E Smoke (`orka/tests/test_e2e_smoke.py`) — 1 test
+
+> **Live E2E test.** Calls the real LLM API (no mocks). Automatically skipped
+> when no API key is configured (`settings.get_api_key()` returns empty).
+
+### TestLiveRefactorPipelineDryRun (1 test)
+| # | Test Name | Description |
+|---|-----------|-------------|
+| 1 | `test_live_refactor_pipeline_dry_run` | Full LangGraph pipeline (dry-run): `gather_context` → `compile_prompt` → `generate_draft` → `validate_draft` → terminal. Asserts `is_valid`, `fatal_error is None`, `"+ 10"` in `draft_snippet`, assembled file is non-empty and contains `Calculator`, and source file is unmodified. |
+
+---
+
 ## Test Validator (`tests/test_validator.py`) — 24 tests
 
 ### TestIndentBody (3 tests)
@@ -205,7 +217,7 @@
 
 ---
 
-**Total: 197 test definitions across 15 test files**
+**Total: 198 test definitions across 16 test files**
 
 > NOTE: Only 5 of the 15 test files are detailed above. The remaining 10 files
 > (test_ingester, test_modifier, test_orchestrator, test_orka_analyzer,

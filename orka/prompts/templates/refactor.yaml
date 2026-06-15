@@ -5,6 +5,7 @@ description: >
   and outputs ONLY the new body logic (no signature, no decorators).
 output_type: body
 injection_points:
+  - system_header
   - constraints_top
   - constraints_bottom
   - quality_gates
@@ -13,6 +14,8 @@ metadata:
   author: orka
 
 system: |
+  %%system_header%%
+
   You are an elite Python backend architect working on Orka CLI.
   Your task is to write ONLY the internal body logic for a specific method.
 
