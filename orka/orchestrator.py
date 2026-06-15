@@ -94,12 +94,15 @@ class Orchestrator:
             )
 
         if result.get("is_valid", False):
-            # Read the patched file
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    after = f.read()
-            except OSError:
-                after = before
+            # Use the draft content from the surgery state to compute the diff.
+            # This is essential for dry_run mode, where the file on disk is unchanged.
+            after = result.get("draft_file_content")
+            if after is None:
+                try:
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        after = f.read()
+                except OSError:
+                    after = before
 
             diff = _compute_diff(before, after, file_path)
             return RefactorResult(

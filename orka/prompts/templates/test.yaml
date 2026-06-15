@@ -5,6 +5,7 @@ description: >
   are handled deterministically by the import fixer.
 output_type: standalone
 injection_points:
+  - system_header
   - constraints_top
   - constraints_bottom
   - quality_gates
@@ -14,6 +15,8 @@ metadata:
   author: orka
 
 system: |
+  %%system_header%%
+
   You are a pytest specialist working on a Python codebase.
 
 
