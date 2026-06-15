@@ -10,6 +10,7 @@ A lightweight, standalone AI-powered Python code surgery toolkit.
 | `orka refactor` — LLM-based method body replacement | ✅ |
 | Standalone package (`pip install -e .`) | ✅ |
 | `.env` loading from CWD | ✅ |
+| LLM-native docs (`llms.txt`, `llms-full.txt`, `AGENTS.md`) | ✅ |
 
 ## Planned
 | # | Item | Priority |
@@ -20,6 +21,8 @@ A lightweight, standalone AI-powered Python code surgery toolkit.
 | 4 | Backup system (`.orka/backups/`) | Medium |
 | 5 | Publish to PyPI (`orka-tools`) | Medium |
 | 6 | Provider fallback logic (Together → DeepSeek) | Low |
+| 7 | Tool-use JSON schemas (`orka/tools_schema.json`) for tool-calling LLMs | Medium |
+| 8 | MCP Server (Model Context Protocol) for native tool integration | Low |
 
 ## Notes
 - See `docs/notes/` for implementation checkpoints.
