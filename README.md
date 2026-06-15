@@ -276,6 +276,14 @@ The prompt system uses composable `%%variable%%` templates with a three-tier rul
 
 For the full architecture reference, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
+## LLM-Native Documentation
+
+Orka provides structured documentation optimized for LLMs and autonomous coding agents:
+
+- **[llms.txt](llms.txt)** — Concise project index for fast context loading.
+- **[llms-full.txt](llms-full.txt)** — Full concatenated context (Architecture + Flow Control).
+- **[AGENTS.md](AGENTS.md)** — Operational guardrails and instructions for AI agents.
+
 ## Project Status
 
 Orka is currently in **Alpha**. The CLI interface, configuration keys, and internal APIs may change between releases without a deprecation period. We recommend pinning to a specific commit hash if you're integrating Orka into an autonomous pipeline.

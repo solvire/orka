@@ -1,0 +1,12 @@
+# Orka
+A lightweight, standalone AI-powered Python code surgery toolkit.
+
+## Key Concepts
+- LangGraph State Machine: Bounded `SurgeryState` TypedDict, deterministic routing, no unbounded `messages`.
+- Prompt Compiler: Custom `%%variable%%` delimiters, three-tier rule override hierarchy, context budgeting.
+- Four-Gate Validation: Snippet AST -> Assembly -> File AST -> Pytest.
+- LibCST Modifier: Syntax-safe method body replacement and class extraction.
+
+## Documentation
+- docs/ARCHITECTURE.md: Full package layout, entry points, state schema, configuration, and client architecture.
+- docs/FLOW_CONTROL.md: Mermaid diagrams, node responsibilities, and data flow for the surgery pipeline.

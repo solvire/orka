@@ -1,0 +1,604 @@
+# Orka - Full LLM Context
+
+## ARCHITECTURE.md
+
+# Orka Architecture
+
+> Canonical reference for the Orka code surgery toolkit. Designed to be
+> ingested by LLM coding assistants for accurate operations on the codebase.
+
+## Package Layout
+
+```text
+orka/
+  pyproject.toml
+  README.md
+  docs/
+    ARCHITECTURE.md   (this file)
+    ROADMAP.md
+    checkpoints/      (implementation checkpoints)
+  orka/               (installable package)
+    __init__.py
+    cli.py            (Typer CLI)
+    config.py         (dotenv settings, CWD-based)
+    clients.py        (LLM client factory — Together, OpenAI, DeepSeek, Gemini, Anthropic, OpenAI-compat)
+    orchestrator.py   (thin wrapper around surgery graph — backward compat)
+    core/
+      __init__.py
+      validator.py    (ast.parse validation: snippet + file)
+      cascade.py      (import cascade after class extraction)
+      ingester.py     (NetworkX graph DB + AST visitor)
+      vector_store.py (ChromaDB embeddings)
+      compiler.py     (%%variable%% prompt compiler with context budgeting)
+      templates.py    (Pydantic schemas: PromptTemplate, InjectionRule, InjectionPoint, OutputType)
+      rule_resolver.py (.mdc rule parser + three-tier resolution)
+      import_fixer.py (Deterministic import generation for test files)
+      init_helper.py  (One-time init: .env, .orka/, Continue.dev rules)
+      snippet_utils.py (LLM output sanitization: strip_md_fences, normalize_snippet_indent, sanitize_llm_output)
+    surgery/
+      __init__.py
+      analyzer.py     (dependency scope analysis)
+      modifier.py     (LibCST method body replacement + preview_patch; consumes snippet_utils.parse_snippet_to_cst_body)
+      synthesizer.py  (Legacy prompt builders — being replaced)
+      transplanter.py (class extraction + import healing)
+    operations/
+      __init__.py
+      graph.py        (LangGraph state machine — surgery pipeline)
+      state.py        (SurgeryState TypedDict — bounded fields, no unbounded messages)
+      helpers.py      (Shared utilities: template loading, error truncation, fixer prompt builder)
+      graph_helpers.py (Graph DB helpers: lazy singleton, node lookups, dependency maps, rendering)
+      controllers/
+        __init__.py
+        context.py      (Node 1: gather_context — source extraction, HyDE query, ChromaDB search)
+        compiler_node.py (Node 2: compile_prompt — signature analysis, graph enrichment, template render)
+        generator.py    (Node 3: generate_draft — LLM invocation + multi-pass sanitization)
+        validator.py    (Node 4: validate_draft — 4-gate validation: snippet AST, assembly, file AST, pytest)
+        fixer.py        (Node 5: fix_draft — LLM fixer with validation error context)
+    prompts/
+      __init__.py
+      templates/
+        refactor.yaml     (Jinja2 template, output_type: body)
+        test.yaml         (Jinja2 template, output_type: standalone)
+        hyde_query.yaml   (Jinja2 template for HyDE semantic query generation)
+      rules/
+        builtin/
+          no_imports_in_body.mdc       (priority 10, applies to *)
+          no_markdown_fences.mdc       (priority 20, applies to *)
+          use_pytest_raises.mdc        (priority 30, applies to test)
+          test_behavior_not_mocks.mdc  (priority 30, applies to test)
+    tests/
+      TEST_MANIFEST.md
+      test_validator.py
+      test_standalone_function.py
+      test_refactor_result.py
+      test_modifier.py
+      test_orchestrator.py
+      test_orka_analyzer.py
+      test_orka_cascade.py
+      test_orka_dual_brain.py
+      test_orka_edge_cases.py
+      test_orka_synthesizer.py
+      test_orka_transplanter.py
+      test_snippet_utils.py  (24 tests: strip_md_fences, normalize_snippet_indent, sanitize_llm_output)
+      ...
+```
+
+## Entry Points
+
+| Command | Module chain | Description |
+|---------|-------------|-------------|
+| `orka scan` | `cli.py` | Build dependency graph + vector DB |
+| `orka inspect --id` | `cli.py` | Query graph node neighbors |
+| `orka extract --file --cls --dest` | `cli.py` -> `transplanter.py` -> `cascade.py` | Move class, heal imports |
+| `orka refactor --file --method --req [--cls\|--func] [--json] [--dry-run]` | `cli.py` -> `graph.py` -> `controllers/*` -> `modifier.py` | LLM-synthesize method body |
+| `orka testgen --file --method [--cls\|--func] [--output] [--run] [--n] [--rule]` | `cli.py` -> `graph.py` -> `controllers/*` | LLM-generate pytest tests |
+| `orka prompt --template [--rule] [--file] [--cls] [--method]` | `cli.py` -> `controllers/context.py` -> `controllers/compiler_node.py` | Compile & display prompt (no LLM) |
+| `orka doctor [--json]` | `cli.py` | Diagnose configuration and project health |
+
+## Surgery Graph Pipeline (LangGraph State Machine)
+
+The surgery pipeline is a deterministic LangGraph state machine with exactly two LLM-invoking nodes (generator and fixer). There is no `ToolNode`, no unbounded `messages` array, and no tool-calling LLM.
+
+```mermaid
+flowchart TD
+    START --> gather_context
+    gather_context --> compile_prompt
+    compile_prompt --> generate_draft
+    generate_draft --> validate_draft
+    validate_draft -->|is_valid=True| END
+    validate_draft -->|is_valid=False & iteration<max| fix_draft
+    validate_draft -->|fatal_error or iteration>=max| END
+    fix_draft --> validate_draft
+```
+
+### Node descriptions
+
+| Node | File | LLM call? | Description |
+|------|------|-----------|-------------|
+| `gather_context` | `controllers/context.py` | Fast LLM (HyDE) | Extract source, generate semantic query, search ChromaDB, backup file |
+| `compile_prompt` | `controllers/compiler_node.py` | No | Signature analysis, graph enrichment, template rendering with `%%var%%` |
+| `generate_draft` | `controllers/generator.py` | Yes (smart) | Invoke LLM with compiled prompt, multi-pass sanitization via `snippet_utils.sanitize_llm_output` |
+| `validate_draft` | `controllers/validator.py` | No | 4-gate validation: snippet AST, assembly, file AST, pytest |
+| `fix_draft` | `controllers/fixer.py` | Yes (smart) | Fix failing draft with validation error context |
+
+### State schema (`state.py`)
+
+The `SurgeryState` TypedDict has bounded fields — no unbounded `messages` list:
+
+| Field | Type | Set by | Description |
+|-------|------|--------|-------------|
+| `source_file` | `str` | Caller | Path to source file |
+| `target_output_file` | `str` | Caller | Path where output is written |
+| `prompt_template_name` | `str` | Caller | `"refactor"` or `"test"` |
+| `requirements` | `str` | Caller | Business requirements |
+| `target_node_id` | `str` | Caller | e.g. `"MyClass.my_method"` |
+| `dry_run` | `bool` | Caller | If True, no disk writes or pytest |
+| `max_iterations` | `int` | Caller | Max fix-attempt loops (default 3) |
+| `provider` | `str` | Caller | LLM provider name |
+| `class_name` | `Optional[str]` | Caller | Class name or None |
+| `method_name` | `str` | Caller | Method/function name |
+| `existing_code` | `str` | `gather_context` | Extracted source code |
+| `class_context` | `str` | `gather_context` | Full class source |
+| `similar_examples` | `list[str]` | `gather_context` | Up to 3 ChromaDB results |
+| `dependency_signatures` | `str` | `gather_context` | Formatted dependency signatures |
+| `original_file_backup` | `Optional[str]` | `gather_context` | Backup of target file |
+| `draft_snippet` | `str` | `generate_draft` / `fix_draft` | Raw LLM output |
+| `draft_file_content` | `str` | `validate_draft` | Full file after assembly |
+| `validation_output` | `str` | `validate_draft` | Truncated error output |
+| `is_valid` | `bool` | `validate_draft` | True when all gates pass |
+| `original_draft_code` | `str` | `generate_draft` | First draft (for fixer context) |
+| `test_file_target` | `Optional[str]` | Caller | Pytest target override |
+| `compiled_prompt` | `str` | `compile_prompt` | Fully compiled prompt |
+| `compiled_prompt_sections` | `dict` | `compile_prompt` | Structured breakdown |
+| `iteration_count` | `int` | `generate_draft` / `fix_draft` | Fix attempt counter |
+| `fatal_error` | `Optional[str]` | Any node | Abort signal |
+
+### Refactoring Pipeline (detailed)
+
+```mermaid
+flowchart TD
+    A[refactor_method] --> B[Capture file before content]
+    B --> C[gather_context: extract source, HyDE query, ChromaDB search]
+    C --> D[compile_prompt: signature analysis, graph enrichment, template render]
+    D --> E[generate_draft: LLM invocation + multi-pass sanitization]
+    E --> F[validate_draft: Gate 1 - snippet AST]
+    F --> G[validate_draft: Gate 2 - LibCST assembly]
+    G --> H[validate_draft: Gate 3 - file AST]
+    H --> I{validate_draft: Gate 4 - pytest}
+    I -->|pass| J[Return RefactorResult]
+    I -->|fail & iteration < max| K[fix_draft: LLM with error context]
+    K --> F
+    I -->|fail & iteration >= max| L[Rollback file]
+    L --> M[Return RefactorResult with error]
+```
+
+### Test Generation Pipeline (detailed)
+
+```mermaid
+flowchart TD
+    A[generate_tests] --> B[gather_context: extract source, HyDE query, ChromaDB search]
+    B --> C[compile_prompt: load test.yaml, resolve rules, render]
+    C --> D[generate_draft: LLM invocation + sanitization]
+    D --> E[validate_draft: Gate 1 - snippet AST]
+    E --> F[validate_draft: Gate 2 - resolve_import + assembly]
+    F --> G[validate_draft: Gate 3 - file AST]
+    G --> H{validate_draft: Gate 4 - pytest}
+    H -->|pass| I[Return RefactorResult with tests_content]
+    H -->|fail & iteration < max| J[fix_draft: LLM with error context]
+    J --> E
+    H -->|fail & iteration >= max| K[Delete test file if new]
+    K --> L[Return RefactorResult with error]
+```
+
+## Prompt Compiler Engine
+
+The prompt compiler replaces the legacy hard-coded prompt functions with a
+composable template + rule system. It uses `%%variable%%` custom delimiters
+(zero collision with Python, YAML, Markdown, JSON, shell, math, LaTeX).
+
+### Architecture
+
+```mermaid
+flowchart LR
+    subgraph Templates
+        T1[refactor.yaml]
+        T2[test.yaml]
+        T3[hyde_query.yaml]
+    end
+    subgraph Rules
+        R1[no_imports_in_body.mdc]
+        R2[no_markdown_fences.mdc]
+        R3[use_pytest_raises.mdc]
+        R4[test_behavior_not_mocks.mdc]
+    end
+    subgraph Resolver[rule_resolver.py]
+        Res[resolve_rules]
+    end
+    subgraph Compiler[compiler.py]
+        C[PromptCompiler.compile]
+    end
+    T1 --> Res
+    T2 --> Res
+    T3 --> Res
+    R1 --> Res
+    R2 --> Res
+    R3 --> Res
+    R4 --> Res
+    Res --> C
+    C --> Output[Compiled prompt string]
+```
+
+### Three-tier rule override hierarchy
+
+| Tier | Source | Priority |
+|------|--------|----------|
+| 1 (builtin) | `orka/prompts/rules/builtin/*.mdc` | Lowest — overridable |
+| 2 (project) | `.orka/rules/*.mdc` | Medium |
+| 3 (CLI) | `--rule` flags | Highest |
+
+Rules are sorted by `(priority, -tier, name)` for deterministic output.
+
+### Context budgeting
+
+The compiler enforces a 4000-character budget for all rule text combined
+(`_enforce_rule_budget`). When exceeded, the lowest-priority rules are
+dropped first, with a log warning.
+
+### Prompt layout principles
+
+The surgery graph enforces strict ordering in compiled prompts to prevent
+LLM generation drift:
+
+1. **Context data always precedes action triggers.** `similar_examples`
+   from ChromaDB are rendered inline via `%%similar_examples%%` above the
+   final output instruction (e.g., `### SYNTHESIZED BODY LOGIC`). This
+   prevents the LLM from treating trailing example code as the generation
+   anchor (the "Completion Trap").
+
+2. **Conditional rendering avoids token bloat.** When rich
+   `dependency_signatures` (full signatures + docstrings from Graph DB)
+   are available, the basic `dependency_map` table (import paths only)
+   is suppressed to avoid rendering the same information twice. This
+   logic lives in `compiler_node.py` before passing values into
+   `context_data` (the `%%var%%` engine has no conditionals).
+
+3. **Draft preservation.** The generator node saves `original_draft_code`
+   (the LLM's first output, post-sanitization) separately from
+   `draft_snippet` (the current working draft). This gives the fixer a
+   baseline of the LLM's original intent.
+
+### Key schemas (`templates.py`)
+
+- `PromptTemplate` — YAML-loaded template with injection points
+- `InjectionRule` — A single composable rule targeting a specific injection point
+- `InjectionPoint` — Enum: `system_header`, `constraints_top`, `constraints_bottom`, `quality_gates`, `style_guide`
+- `OutputType` — Enum: `body`, `standalone`, `new_file`
+
+### Compiler internals (`compiler.py`)
+
+- `PromptCompiler.compile(template, resolved_rules, context_data)` — main entry point
+- `_enforce_rule_budget(rules, budget_chars)` — truncate lowest-priority rules
+- `_render_template(source, context, label)` — `%%var%%` substitution via regex
+- `_validate_placeholders(source, template_name, section)` — early warning for missing vars
+
+## CLI Commands
+
+### `orka refactor`
+
+| Flag | Description |
+|------|-------------|
+| `--file` | Source file path |
+| `--cls` | Class name (omit for standalone functions) |
+| `--func` | Alias for `--cls` (mutually exclusive with `--cls`) |
+| `--method` | Method or function name to refactor |
+| `--req` | Business requirements for the new logic |
+| `--json` | Output structured JSON instead of text |
+| `--dry-run` | Preview changes without modifying file (implies `--json`) |
+| `--provider` | LLM provider override |
+
+### `orka testgen`
+
+| Flag | Description |
+|------|-------------|
+| `--file` | Source file path |
+| `--cls` | Class name (omit for standalone functions) |
+| `--func` | Alias for `--cls` (mutually exclusive with `--cls`) |
+| `--method` | Method or function name to generate tests for |
+| `--output` | Write tests to this file (omit for stdout) |
+| `--dry-run` | Preview generated tests without writing |
+| `--run` | Execute pytest after writing |
+| `--n` | Generate N tests in a loop (appending to output file) |
+| `--json` | Output structured JSON |
+| `--provider` | LLM provider override |
+
+### `orka prompt`
+
+| Flag | Description |
+|------|-------------|
+| `--template`, `-t` | Template name (e.g. 'refactor', 'test') |
+| `--rule` | Rule name(s) to inject (repeatable) |
+| `--file` | Source file path (for context extraction) |
+| `--cls` | Class name (for context) |
+| `--method` | Method or function name (for context) |
+| `--req` | Business requirements (used as context) |
+
+### `orka doctor`
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output structured JSON instead of text |
+
+## Structured Output
+
+When `--json` or `--dry-run` is used, `orka refactor` emits a single JSON line:
+
+```json
+{"success": true, "label": "MyClass.my_method", "file": "/abs/path.py", "diff": "--- ...", "dry_run": false}
+{"success": false, "label": "my_function", "file": "/abs/path.py", "error": "Syntax error ...", "dry_run": true}
+```
+
+When `--json` is used with `orka testgen`:
+
+```json
+{"success": true, "label": "MyClass.my_method", "file": "/abs/path.py", "tests_content": "def test_...", "dry_run": false, "generated": 3, "attempted": 3}
+```
+
+When `--json` is used with `orka doctor`:
+
+```json
+{"initialized": true, "provider": "together_ai", "smart_model": "...", "fast_model": "...", "edit_model": "...", "temperature": 0.1, "timeout": 120, "max_retries": 3, "verify_ssl": true, "auto_scan": true, "dry_run": false, "verbose": false, "api_keys": {"openai": true, ...}, "project_root": "/path", "last_scan": "2024-...", "health_checks": {"openai": {"alive": true, "error": null, "latency_ms": 123.4}, ...}}
+```
+
+## Four-Gate Validation
+
+```mermaid
+flowchart LR
+    subgraph LLM
+        A[LLM returns code]
+    end
+    subgraph Gate1[Snippet AST]
+        B[validate_code_snippet]
+    end
+    subgraph Assembly
+        C[LibCST patch or import assembly]
+    end
+    subgraph Gate2[File AST]
+        D[ast.parse full file]
+    end
+    subgraph Gate3[Pytest]
+        E[subprocess pytest]
+    end
+    A --> B
+    B -->|pass| C
+    B -->|fail| F[Reject + error]
+    C --> D
+    D -->|pass| E
+    D -->|fail| G[Reject + error]
+    E -->|pass| H[Success]
+    E -->|fail| I[Fix loop]
+```
+
+Both AST gates use `ast.parse()`. The snippet gate wraps bare statements in a dummy
+function so that `return x`, `raise`, etc. parse correctly.
+
+## Key Dependencies
+
+| Library | Purpose |
+|---------|---------|
+| `typer` | CLI framework |
+| `rich` | Terminal output |
+| `python-dotenv` | Environment loading |
+| `libcst` | Syntax-safe code transformations |
+| `jinja2` | Prompt template rendering |
+| `pyyaml` | Template and rule file parsing |
+| `networkx` | Dependency graph |
+| `chromadb` | Semantic vector search |
+| `langgraph` | State machine framework |
+| `pydantic` | Template/rule schemas |
+| `typing_extensions` | TypedDict support |
+| `together` | Together AI SDK (native) |
+| `langchain-openai` | OpenAI / DeepSeek / OpenAI-compatible providers |
+| `langchain-google-genai` | Google Gemini (optional) |
+| `langchain-anthropic` | Anthropic Claude (optional) |
+
+## Configuration
+
+- `.env` in the current working directory is loaded at import time.
+- `ORKA_ENV_FILE` overrides the `.env` path.
+- `ORKA_PROJECT_ROOT` overrides the project root directory.
+- API keys use standard names (`OPENAI_API_KEY`, `TOGETHER_API_KEY`, etc.).
+- Three model tiers: `smart`, `fast`, `edit` (see `example.env` for full docs).
+
+### All settings
+
+| Setting | Env var | Default | Description |
+|---------|---------|---------|-------------|
+| Project root | `ORKA_PROJECT_ROOT` | CWD | Project root directory |
+| Default provider | `ORKA_DEFAULT_PROVIDER` | `together_ai` | Default LLM provider |
+| Smart model | `ORKA_SMART_MODEL` | Provider default | Architecture/planning model |
+| Fast model | `ORKA_FAST_MODEL` | Smart model | Quick edits/summarization model |
+| Edit model | `ORKA_EDIT_MODEL` | Smart model | Surgical code transformation model |
+| Temperature | `ORKA_TEMPERATURE` | 0.1 | LLM temperature |
+| Timeout | `ORKA_TIMEOUT` | 120 | API timeout in seconds |
+| Max retries | `ORKA_MAX_RETRIES` | 3 | API retry count |
+| Verify SSL | `ORKA_VERIFY_SSL` | True | SSL verification |
+| Auto-scan | `ORKA_AUTO_SCAN` | True | Background scan after mutation |
+| Dry run | `ORKA_DRY_RUN` | False | Global dry-run mode |
+| Verbose | `ORKA_VERBOSE` | False | Verbose logging |
+
+### Provider-specific model overrides
+
+| Env var | Description |
+|---------|-------------|
+| `OPENAI_MODEL` | Override OpenAI model |
+| `DEEPSEEK_MODEL` | Override DeepSeek model |
+| `TOGETHER_MODEL` | Override Together AI model |
+| `GEMINI_MODEL` | Override Gemini model |
+| `ANTHROPIC_MODEL` | Override Anthropic model |
+
+### Provider-specific API base URLs
+
+| Env var | Default | Description |
+|---------|---------|-------------|
+| `API_BASE` | `""` | Generic OpenAI-compatible base URL |
+| `OPENAI_API_BASE` | `https://api.openai.com/v1` | OpenAI base URL |
+| `DEEPSEEK_API_BASE` | `https://api.deepseek.com/v1` | DeepSeek base URL |
+
+### Supported providers
+
+| Provider | LangChain backend | Key env var | API base env var |
+|----------|-------------------|-------------|------------------|
+| OpenAI | `ChatOpenAI` | `OPENAI_API_KEY` | `OPENAI_API_BASE` |
+| DeepSeek | `ChatOpenAI` | `DEEPSEEK_API_KEY` | `DEEPSEEK_API_BASE` |
+| Together AI | Together SDK (native wrapper) | `TOGETHER_API_KEY` | — |
+| Google Gemini | `ChatGoogleGenerativeAI` | `GEMINI_API_KEY` | — |
+| Anthropic | `ChatAnthropic` | `ANTHROPIC_API_KEY` | — |
+| OpenRouter | `ChatOpenAI` (via `openai_compat`) | `OPENROUTER_API_KEY` | `API_BASE` |
+| Groq | `ChatOpenAI` (via `openai_compat`) | `GROQ_API_KEY` | `API_BASE` |
+| Generic OpenAI-compat | `ChatOpenAI` (via `openai_compat`) | `API_KEY` | `API_BASE` |
+
+### Client architecture
+
+```mermaid
+flowchart LR
+    Factory[OrkaClientFactory.create provider, model_tier] --> Together[_TogetherWrapper]
+    Factory --> OpenAI[ChatOpenAI]
+    Factory --> DeepSeek[ChatOpenAI]
+    Factory --> Gemini[ChatGoogleGenerativeAI]
+    Factory --> Anthropic[ChatAnthropic]
+    Factory --> OpenCompat[ChatOpenAI via openai_compat]
+```
+
+Every path returns an object obeying `.invoke(messages) -> AIMessage`.
+Callers never know which SDK is underneath.
+
+### Model resolution order
+
+For any provider and tier, the model name is resolved in this order:
+
+1. Provider-specific model override (`DEEPSEEK_MODEL`, `TOGETHER_MODEL`, etc.)
+2. Orka tier env var (`ORKA_SMART_MODEL`, `ORKA_FAST_MODEL`, `ORKA_EDIT_MODEL`) — only when provider matches `DEFAULT_PROVIDER`
+3. Default from `DEFAULT_MODELS` registry for this provider
+4. Ultimate fallback: `"gpt-4o"`
+
+## FLOW_CONTROL.md
+
+# Flow Control — Orka Surgery Graph
+
+This document contains Mermaid diagrams showing the state machines and control flow for Orka's LangGraph-based surgery pipeline.
+
+## Surgery Graph State Machine
+
+The surgery graph is a deterministic state machine (not a ReAct agent) that enforces strict ordering: `gather_context -> compile_prompt -> generate_draft -> validate_draft -> fix_draft`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> gather_context
+    
+    gather_context --> compile_prompt
+    compile_prompt --> generate_draft
+    generate_draft --> validate_draft
+    
+    validate_draft --> end: is_valid == true
+    validate_draft --> fix_draft: is_valid == false AND iteration_count < max_iterations
+    validate_draft --> end: is_valid == false AND iteration_count >= max_iterations
+    
+    fix_draft --> validate_draft
+    
+    end --> [*]
+```
+
+## Node Responsibilities
+
+### gather_context
+- Extract target method source via `extract_method_source()`
+- Extract class context via `extract_class_source()`
+- Query ChromaDB for `similar_examples` (self-exclusion filtered)
+- Extract `dependency_signatures` from Graph DB (full signatures + docstrings)
+- Backup target file
+
+### compile_prompt
+- Load template (`refactor.yaml` or `test.yaml`)
+- Resolve injection rules via `resolve_rules()`
+- Analyze signature via LibCST
+- Build dependency map and caller constraints from Graph DB
+- **Prompt layout enforcement:**
+  - `similar_examples` rendered inline via `%%similar_examples%%` (above final instruction)
+  - `dependency_map` suppressed when `dependency_signatures` present (conditional redundancy)
+- Compile via `PromptCompiler.compile(template, rules, context_data)`
+
+### generate_draft
+- Send `compiled_prompt` to LLM
+- Multi-pass sanitization via `snippet_utils.sanitize_llm_output()` (strips fences, dedents, removes preamble/postscript, normalizes whitespace)
+- Save to both `draft_snippet` and `original_draft_code` (baseline preservation)
+- If sanitization yields empty string, set `fatal_error` and abort
+- Increment `iteration_count`
+
+### validate_draft
+- **Gate 1:** Snippet AST — `ast.parse` on the snippet alone (wrapped in dummy function)
+- **Gate 2:** Assembly — LibCST patch into source (refactor) or `resolve_import` + assembly (testgen)
+- **Gate 3:** File AST — `ast.parse` on the fully assembled file
+- **Gate 4:** Disk write + pytest — write to real path, run `pytest --exitfirst --tb=short`, truncate output
+- Populate `draft_file_content`, `validation_output`, and `is_valid`
+- Set `fatal_error` if unrecoverable
+
+### fix_draft
+- Load failed `draft_snippet` + `validation_output` + `original_draft_code`
+- Compile fix prompt with error context
+- Send to LLM for repair
+- Update `draft_snippet` (preserve `original_draft_code`)
+- Increment `iteration_count`
+
+## Data Flow: Prompt Compilation
+
+```mermaid
+flowchart TD
+    A[gather_context] -->|existing_code| B[compile_prompt]
+    A -->|similar_examples| B
+    A -->|dependency_signatures| B
+    
+    B --> C{has_rich_deps?}
+    C -->|Yes| D[effective_dep_map = '']
+    C -->|No| E[effective_dep_map = render_dependency_map_table]
+    
+    D --> F[context_data]
+    E --> F
+    
+    F --> G[similar_examples_text = join examples]
+    G --> H[%%similar_examples%% placeholder]
+    
+    H --> I[PromptCompiler.compile]
+    I --> J[compiled_prompt]
+    
+    J --> K[generate_draft]
+    K --> L[LLM response]
+    L --> M[sanitize_llm_output]
+    M --> N[draft_snippet + original_draft_code]
+    
+    N --> O[validate_draft]
+    O --> P{Gate 1: snippet AST}
+    P -->|pass| Q{Gate 2: assembly}
+    Q -->|refactor| R[preview_patch → parse_snippet_to_cst_body]
+    Q -->|testgen| S[resolve_import + assembly]
+    R --> T{draft_file_content}
+    S --> T
+    T --> U{Gate 3: file AST}
+    U -->|pass| V{Gate 4: pytest}
+    V -->|pass| W[is_valid = true]
+    V -->|fail| X[truncated error → fix_draft]
+```
+
+## Routing Logic (validate_draft → end | fix_draft)
+
+```python
+def _router(state: SurgeryState) -> str:
+    if state['is_valid']:
+        return 'end'
+    
+    if state['iteration_count'] >= state['max_iterations']:
+        return 'end'  # Give up, rollback
+    
+    return 'fix_draft'  # Retry with error context
+```
+
+The router enforces a bounded retry loop: if validation fails and we haven't exceeded `max_iterations`, route to `fix_draft` for LLM repair. Otherwise, route to `end` (which triggers rollback in `_terminal_node`).
