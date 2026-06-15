@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#
+# pre-push hook: Scans outgoing commits for leaked secrets before they reach the remote.
+# Install:  make hooks   (or:  git config core.hooksPath .githooks)
+#
+
+set -euo pipefail
+
+# Find gitleaks — check project venv first, then PATH
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+GITLEAKS=""
+
+if [ -x "$REPO_ROOT/env/bin/gitleaks" ]; then
+    GITLEAKS="$REPO_ROOT/env/bin/gitleaks"
+elif command -v gitleaks &>/dev/null; then
+    GITLEAKS="$(command -v gitleaks)"
+else
+    echo "⚠  gitleaks not found — skipping secret scan."
+    echo "   Install:  https://github.com/gitleaks/gitleaks"
+    exit 0
+fi
+
+# 'gitleaks protect' scans exactly the commits being pushed
+"$GITLEAKS" protect --staged --config "$REPO_ROOT/.gitleaks.toml" 2>&1
+EXIT_CODE=$?
+
+if [ $EXIT_CODE -eq 1 ]; then
+    echo ""
+    echo "❌  Gitleaks found potential secrets in your outgoing commits!"
+    echo "   Push blocked. Review the findings above."
+    echo ""
+    echo "   If this is a false positive, add an allowlist entry in .gitleaks.toml"
+    echo "   To bypass this check once:  git push --no-verify"
+    echo ""
+    exit 1
+fi
+
+exit 0

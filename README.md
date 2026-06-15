@@ -9,6 +9,7 @@ Refactor, test, and transplant code with surgical precision — powered by AST a
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)]()
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Security: Safety CLI](https://img.shields.io/badge/security-Safety_CLI-blue.svg)](docs/SECURITY_AUDIT.md)
 
 [Installation](#installation) · [Quick Start](#quick-start) · [Commands](#commands) · [Configuration](#configuration) · [Architecture](#architecture)
 
@@ -61,6 +62,28 @@ Once installed globally, the `orka` command is available everywhere. Navigate to
 ```bash
 cd /path/to/your/project
 orka doctor  # Verify setup and API connectivity
+```
+
+### Security hooks (contributors)
+
+Orka ships with a pre-push git hook that scans outgoing commits for leaked secrets using [Gitleaks](https://github.com/gitleaks/gitleaks). If a potential secret is detected, the push is blocked.
+
+```bash
+make hooks
+```
+
+This sets your local repo's hooks path to `.githooks/`. You'll also need [Gitleaks](https://github.com/gitleaks/gitleaks) installed — `make hooks` will download it into your venv automatically if it's not found.
+
+To bypass the hook once (e.g. for a known false positive):
+
+```bash
+git push --no-verify
+```
+
+You can also run a full security audit at any time:
+
+```bash
+make security
 ```
 
 ## Quick Start
@@ -258,6 +281,19 @@ For the full architecture reference, see [docs/ARCHITECTURE.md](docs/ARCHITECTUR
 Orka is currently in **Alpha**. The CLI interface, configuration keys, and internal APIs may change between releases without a deprecation period. We recommend pinning to a specific commit hash if you're integrating Orka into an autonomous pipeline.
 
 Feedback and bug reports are welcome — this is the phase where real-world usage shapes the product.
+
+---
+
+## Security
+
+Orka is scanned regularly with:
+
+- **[Safety CLI](https://safetycli.com/)** — dependency vulnerability monitoring
+- **Bandit** — Python static security analysis
+- **TruffleHog** — git history secret leak detection
+- **pip-audit** — supply chain vulnerability audit
+
+See [docs/SECURITY_AUDIT.md](docs/SECURITY_AUDIT.md) for the latest full report and re-run instructions.
 
 ---
 

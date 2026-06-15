@@ -28,12 +28,34 @@ Thumbs.db
 # Environment files
 .env.local
 .env.production
+.env.*.local
+
+# ── Secrets & credentials ──────────────────────────
+# Never commit real keys, certs, or secrets to the repo.
+# (example.env is intentionally tracked — it contains only placeholders)
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.ppk
+*.pka
+secrets/
+credentials/
+.creds/
+**/credentials.json
+**/service-account*.json
+**/sa-key*.json
 
 # Checkpoint artifacts (optional: comment out to exclude from version control)
 # docs/checkpoints/
 
 # detect-secrets baseline
 .secrets.baseline
+
+# Safety CLI
+.safety-project.ini
 
 .aider*
 .orka_*

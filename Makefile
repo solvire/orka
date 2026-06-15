@@ -1,4 +1,4 @@
-.PHONY: help install install-dev install-all test test-cov lint clean
+.PHONY: help install install-dev install-all test test-cov lint security hooks clean
 
 VENV   = env
 PYTHON = $(VENV)/bin/python
@@ -47,6 +47,32 @@ lint: install-dev  ## Check for syntax and import issues
 	$(PYTHON) -m py_compile orka/orchestrator.py
 	$(PYTHON) -c "from orka.config import settings; print('config OK')"
 	$(PYTHON) -c "from orka.clients import OrkaClientFactory; print('clients OK')"
+
+# ------------------------------------------------------------------
+# Security
+# ------------------------------------------------------------------
+
+security: install-dev  ## Run full security audit (Bandit + pip-audit + Safety)
+	@echo "=== Bandit (static analysis) ==="
+	$(PYTHON) -m bandit -r orka/ -q
+	@echo ""
+	@echo "=== pip-audit (dependency vulnerabilities) ==="
+	$(PYTHON) -m pip_audit --desc
+	@echo ""
+	@echo "=== Safety CLI (dependency monitoring) ==="
+	$(PYTHON) -m safety scan
+	@echo ""
+	@echo "=== TruffleHog (secret leak scan - requires Docker) ==="
+	@docker run --rm -v "$$(pwd):/repo" trufflesecurity/trufflehog:latest git file:///repo --no-update 2>&1 || echo "(skipped - Docker not available)"
+
+hooks:  ## Install git pre-push hook (gitleaks secret scanner)
+	@if [ ! -x env/bin/gitleaks ]; then \
+		echo "Installing gitleaks into venv..."; \
+		curl -sL https://github.com/gitleaks/gitleaks/releases/download/v8.25.1/gitleaks_8.25.1_linux_x64.tar.gz | tar -xzf - -C env/bin/ gitleaks; \
+		chmod +x env/bin/gitleaks; \
+	fi
+	git config core.hooksPath .githooks
+	@echo "✅ Git hooks installed — pre-push will scan for secrets before pushing."
 
 clean:  ## Remove caches and build artifacts
 	rm -rf .pytest_cache __pycache__

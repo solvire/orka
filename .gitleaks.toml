@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[allowlist]
+paths = [
+    'example\.env$',
+    'README\.md$',
+]
+regexes = [
+    'testpass\d+',
+]
