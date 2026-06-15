@@ -13,6 +13,7 @@ from typing import Any
 
 from orka.clients import OrkaLangChainClient
 from orka.config import settings
+from orka.core.snippet_utils import sanitize_llm_output
 from orka.core.validator import validate_code_snippet
 from orka.operations.helpers import build_fixer_prompt
 
@@ -74,7 +75,7 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
             prompt=fixer_prompt,
             system_instruction=system_instruction,
         )
-        fixed_snippet = OrkaLangChainClient.fix_md_fences(raw_output)
+        fixed_snippet = sanitize_llm_output(raw_output)
     except Exception as e:
         logger.error("LLM fixer call failed: %s", e)
         return {

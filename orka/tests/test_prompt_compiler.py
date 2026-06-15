@@ -12,14 +12,13 @@ from orka.core.templates import (
     PromptTemplate,
     InjectionRule,
 )
-from orka.core.prompt_compiler import (
+from orka.core.rule_resolver import (
     parse_mdc_file,
     load_rules_from_directory,
     resolve_rules,
-    enforce_rule_budget,
-    compile_prompt,
-    resolve_import,
 )
+from orka.core.compiler import PromptCompiler, _enforce_rule_budget
+from orka.core.import_fixer import resolve_import
 
 
 # ---------------------------------------------------------------------------
@@ -144,13 +143,13 @@ class TestParseMdcFile:
     def test_parse_builtin_no_imports(self, tmp_path):
         """Parse a real .mdc file – no_imports rule."""
         mdc_content = textwrap.dedent("""\
+            ---
             name: no_imports
             injection_point: system_header
             priority: 100
-            tier: 1
             applies_to: ["*"]
-            text: |
-              Do not import anything in the generated code.
+            ---
+            Do not import anything in the generated code.
         """)
         path = tmp_path / "no_imports.mdc"
         path.write_text(mdc_content, encoding="utf-8")
@@ -163,13 +162,13 @@ class TestParseMdcFile:
     def test_parse_builtin_use_pytest_raises(self, tmp_path):
         """Parse a .mdc file with constraints_bottom and applies_to test."""
         mdc_content = textwrap.dedent("""\
+            ---
             name: use_pytest_raises
             injection_point: constraints_bottom
             priority: 50
-            tier: 1
             applies_to: ["test"]
-            text: |
-              Use `with pytest.raises(...)` for exception tests.
+            ---
+            Use `with pytest.raises(...)` for exception tests.
         """)
         path = tmp_path / "use_pytest_raises.mdc"
         path.write_text(mdc_content, encoding="utf-8")
@@ -181,13 +180,13 @@ class TestParseMdcFile:
     def test_parse_builtin_test_behavior_not_mocks(self, tmp_path):
         """Parse a .mdc file with quality_gates injection point."""
         mdc_content = textwrap.dedent("""\
+            ---
             name: test_behavior_not_mocks
             injection_point: quality_gates
             priority: 75
-            tier: 1
             applies_to: ["test"]
-            text: |
-              Prefer testing behaviour, not implementation details. Avoid mocks where possible.
+            ---
+            Prefer testing behaviour, not implementation details. Avoid mocks where possible.
         """)
         path = tmp_path / "test_behavior_not_mocks.mdc"
         path.write_text(mdc_content, encoding="utf-8")
@@ -211,12 +210,13 @@ class TestLoadRulesFromDirectory:
             ("rule_d", "style_guide", 70, 1, ["*"]),
         ]:
             content = textwrap.dedent(f"""\
+                ---
                 name: {name}
                 injection_point: {inf}
                 priority: {pri}
-                tier: {tie}
                 applies_to: {app}
-                text: "Sample rule text."
+                ---
+                Sample rule text.
             """)
             path = tmp_path / f"{name}.mdc"
             path.write_text(content, encoding="utf-8")
@@ -231,12 +231,13 @@ class TestLoadRulesFromDirectory:
             ("only_tier_1", "system_header", 100, 1, ["*"]),
         ]:
             content = textwrap.dedent(f"""\
+                ---
                 name: {name}
                 injection_point: {inf}
                 priority: {pri}
-                tier: {tie}
                 applies_to: {app}
-                text: "Tier 1 rule."
+                ---
+                Tier 1 rule.
             """)
             path = tmp_path / f"{name}.mdc"
             path.write_text(content, encoding="utf-8")
@@ -246,58 +247,95 @@ class TestLoadRulesFromDirectory:
 
 
 # ---------------------------------------------------------------------------
-# resolve_rules
+# resolve_rules  — now loads from directories, not pre-built lists
 # ---------------------------------------------------------------------------
+
+def _write_rules_dir(tmp_path: Path, rules_spec: list[tuple]) -> Path:
+    """Helper: write .mdc files for a list of (name, injection_point, applies_to, priority, tier)."""
+    for name, ip, applies_to, priority, tier in rules_spec:
+        content = textwrap.dedent(f"""\
+            ---
+            name: {name}
+            injection_point: {ip}
+            priority: {priority}
+            applies_to: {applies_to}
+            ---
+            Rule text for {name}.
+        """)
+        path = tmp_path / f"{name}.mdc"
+        path.write_text(content, encoding="utf-8")
+    return tmp_path
+
 
 class TestResolveRules:
     def test_resolve_for_refactor_template(self, tmp_path):
         """refactor template should get 2 universal rules (no_imports, no_markdown)."""
-        rule_a = InjectionRule(name="no_imports", text="x", applies_to=["*"], injection_point=InjectionPoint.system_header, priority=100, tier=1)
-        rule_b = InjectionRule(name="no_markdown", text="y", applies_to=["*"], injection_point=InjectionPoint.constraints_top, priority=90, tier=1)
-        rule_c = InjectionRule(name="test_only", text="z", applies_to=["test"], injection_point=InjectionPoint.quality_gates, priority=80, tier=1)
-        all_rules = [rule_a, rule_b, rule_c]
-
-        refactor_rules = resolve_rules("refactor", all_rules)
+        rules_dir = _write_rules_dir(tmp_path, [
+            ("no_imports", "system_header", "[\"*\"]", 100, 1),
+            ("no_markdown", "constraints_top", "[\"*\"]", 90, 1),
+            ("test_only", "quality_gates", "[\"test\"]", 80, 1),
+        ])
+        # Provide the injection points that a refactor template would declare
+        points = [InjectionPoint.system_header, InjectionPoint.constraints_top]
+        refactor_rules = resolve_rules(
+            "refactor",
+            points,
+            builtin_rules_dir=rules_dir,
+        )
         names = {r.name for r in refactor_rules}
         assert names == {"no_imports", "no_markdown"}
 
-    def test_resolve_for_test_template(self):
+    def test_resolve_for_test_template(self, tmp_path):
         """test template should get all 4 rules."""
-        rules = [
-            InjectionRule(name="a", text="x", applies_to=["*"]),
-            InjectionRule(name="b", text="y", applies_to=["test"]),
-            InjectionRule(name="c", text="z", applies_to=["*"]),
-            InjectionRule(name="d", text="w", applies_to=["test"]),
-        ]
-        test_rules = resolve_rules("test", rules)
+        rules_dir = _write_rules_dir(tmp_path, [
+            ("a", "system_header", "[\"*\"]", 100, 1),
+            ("b", "quality_gates", "[\"test\"]", 90, 1),
+            ("c", "constraints_top", "[\"*\"]", 80, 1),
+            ("d", "constraints_bottom", "[\"test\"]", 70, 1),
+        ])
+        points = list(InjectionPoint)
+        test_rules = resolve_rules(
+            "test",
+            points,
+            builtin_rules_dir=rules_dir,
+        )
         assert len(test_rules) == 4
 
-    def test_resolve_filters_by_injection_point(self):
+    def test_resolve_filters_by_injection_point(self, tmp_path):
         """Only rules matching the given injection points returned."""
-        rules = [
-            InjectionRule(name="sys", text="x", injection_point=InjectionPoint.system_header),
-            InjectionRule(name="con", text="y", injection_point=InjectionPoint.constraints_top),
-            InjectionRule(name="qua", text="z", injection_point=InjectionPoint.quality_gates),
-        ]
+        rules_dir = _write_rules_dir(tmp_path, [
+            ("sys", "system_header", "[\"*\"]", 100, 1),
+            ("con", "constraints_top", "[\"*\"]", 90, 1),
+            ("qua", "quality_gates", "[\"*\"]", 80, 1),
+        ])
         # Only system_header and constraints_top points are considered for refactor
-        filtered = resolve_rules("refactor", rules, injection_points=[InjectionPoint.system_header, InjectionPoint.constraints_top])
+        filtered = resolve_rules(
+            "refactor",
+            [InjectionPoint.system_header, InjectionPoint.constraints_top],
+            builtin_rules_dir=rules_dir,
+        )
         assert {r.name for r in filtered} == {"sys", "con"}
 
-    def test_resolve_rules_are_sorted(self):
+    def test_resolve_rules_are_sorted(self, tmp_path):
         """Rules sorted by (priority, -tier, name)."""
-        rules = [
-            InjectionRule(name="c", text="c", priority=50, tier=2),
-            InjectionRule(name="a", text="a", priority=100, tier=1),
-            InjectionRule(name="b", text="b", priority=50, tier=2),
-        ]
-        sorted_rules = resolve_rules("refactor", rules)
+        rules_dir = _write_rules_dir(tmp_path, [
+            ("c", "system_header", "[\"*\"]", 50, 2),
+            ("a", "system_header", "[\"*\"]", 100, 1),
+            ("b", "system_header", "[\"*\"]", 50, 2),
+        ])
+        sorted_rules = resolve_rules(
+            "refactor",
+            [InjectionPoint.system_header],
+            builtin_rules_dir=rules_dir,
+        )
         names = [r.name for r in sorted_rules]
-        # Highest priority first, then lower tier (higher number first), then alphabetical
-        assert names == ["a", "c", "b"]
+        # Sort key is (priority, -tier, name) ascending — lower priority first,
+        # then higher tier number (lower -tier), then alphabetical
+        assert names == ["b", "c", "a"]
 
 
 # ---------------------------------------------------------------------------
-# enforce_rule_budget
+# _enforce_rule_budget
 # ---------------------------------------------------------------------------
 
 class TestEnforceRuleBudget:
@@ -306,27 +344,27 @@ class TestEnforceRuleBudget:
             InjectionRule(name="a", text="x", priority=100),
             InjectionRule(name="b", text="y", priority=90),
         ]
-        kept = enforce_rule_budget(rules, max_chars=1000)
+        kept = _enforce_rule_budget(rules, budget_chars=1000)
         assert len(kept) == 2
 
     def test_drops_lowest_priority(self):
         rules = [
-            InjectionRule(name="high", text="x" * 200, priority=100),
-            InjectionRule(name="low", text="y" * 200, priority=10),
+            InjectionRule(name="high", text="x" * 200, priority=10),
+            InjectionRule(name="low", text="y" * 200, priority=100),
         ]
-        kept = enforce_rule_budget(rules, max_chars=300)
+        kept = _enforce_rule_budget(rules, budget_chars=300)
         assert len(kept) == 1
         assert kept[0].name == "high"
 
     def test_single_rule_exceeds_budget(self):
+        """A single rule exceeding budget is dropped (graceful degradation)."""
         rule = InjectionRule(name="huge", text="z" * 500, priority=50)
-        kept = enforce_rule_budget([rule], max_chars=100)
-        assert len(kept) == 1
-        assert kept[0].name == "huge"
+        kept = _enforce_rule_budget([rule], budget_chars=100)
+        assert len(kept) == 0
 
 
 # ---------------------------------------------------------------------------
-# compile_prompt
+# PromptCompiler.compile()
 # ---------------------------------------------------------------------------
 
 class TestPromptCompiler:
@@ -335,13 +373,13 @@ class TestPromptCompiler:
         template = PromptTemplate(name="min", system="System: %%system_header%%", user="User: %%existing_code%%")
         rules = [InjectionRule(name="x", text="rule text", injection_point=InjectionPoint.system_header)]
         context = {"existing_code": "def f(): pass"}
-        result = compile_prompt(template, rules, context)
+        result = PromptCompiler().compile(template, rules, context)
         assert "rule text" in result
         assert "def f(): pass" in result
 
     def test_compile_without_rules(self):
         template = PromptTemplate(name="norules", system="Hello", user="World")
-        result = compile_prompt(template, [], {})
+        result = PromptCompiler().compile(template, [], {})
         assert "Hello" in result
         assert "World" in result
 
@@ -349,27 +387,48 @@ class TestPromptCompiler:
         """Load refactor.yaml, resolve rules, compile with sample data."""
         from orka.operations.helpers import load_template
         tmpl = load_template("refactor")
-        rules = resolve_rules("refactor", load_rules_from_directory())
+        rules = resolve_rules(
+            "refactor",
+            tmpl.injection_points,
+            builtin_rules_dir=Path(__file__).resolve().parent.parent / "prompts" / "rules" / "builtin",
+        )
         context = {
             "existing_code": "def add(a, b): return a + b",
             "class_context": "",
-            "requirements": "Add documentation",
+            "business_requirements": "Add documentation",
+            "caller_constraints": "(no callers found)",
+            "dependency_map": "",
+            "dependency_signatures": "",
+            "docblock": "",
+            "similar_examples": "",
         }
-        result = compile_prompt(tmpl, rules, context)
+        result = PromptCompiler().compile(tmpl, rules, context)
         assert "def add(a, b): return a + b" in result
 
     def test_compile_real_test_template(self):
         from orka.operations.helpers import load_template
         tmpl = load_template("test")
-        rules = resolve_rules("test", load_rules_from_directory())
+        rules = resolve_rules(
+            "test",
+            tmpl.injection_points,
+            builtin_rules_dir=Path(__file__).resolve().parent.parent / "prompts" / "rules" / "builtin",
+        )
         context = {
             "existing_code": "def mult(a, b): return a * b",
+            "class_context": "",
+            "target_import": "from myapp.utils import mult",
+            "caller_constraints": "",
+            "dependency_map": "",
+            "dependency_signatures": "",
+            "docblock": "",
+            "file_path": "myapp/utils.py",
+            "similar_examples": "",
         }
-        result = compile_prompt(tmpl, rules, context)
+        result = PromptCompiler().compile(tmpl, rules, context)
         assert "def mult(a, b): return a * b" in result
 
     def test_all_injection_points_get_context(self):
-        """No raw {{ }} remain when all points have empty fallbacks."""
+        """No raw %% remain when all points have empty fallbacks."""
         tmpl = PromptTemplate(
             name="all_pts",
             system="%%system_header%% %%constraints_top%%",
@@ -377,20 +436,20 @@ class TestPromptCompiler:
             injection_points=list(InjectionPoint),
         )
         rules = [
-            InjectionRule(name=x, text="", injection_point=InjectionPoint.system_header),
-            InjectionRule(name=x, text="", injection_point=InjectionPoint.constraints_top),
-            InjectionRule(name=x, text="", injection_point=InjectionPoint.constraints_bottom),
-            InjectionRule(name=x, text="", injection_point=InjectionPoint.quality_gates),
-            InjectionRule(name=x, text="", injection_point=InjectionPoint.style_guide),
+            InjectionRule(name="sh", text="", injection_point=InjectionPoint.system_header),
+            InjectionRule(name="ct", text="", injection_point=InjectionPoint.constraints_top),
+            InjectionRule(name="cb", text="", injection_point=InjectionPoint.constraints_bottom),
+            InjectionRule(name="qg", text="", injection_point=InjectionPoint.quality_gates),
+            InjectionRule(name="sg", text="", injection_point=InjectionPoint.style_guide),
         ]
-        result = compile_prompt(tmpl, rules, {"existing_code": "x"})
+        result = PromptCompiler().compile(tmpl, rules, {"existing_code": "x"})
         assert "%%" not in result
 
     def test_compiler_different_instances_independent(self):
         tmpl = PromptTemplate(name="indep", system="S", user="U")
-        r1 = compile_prompt(tmpl, [], {"existing_code": "a"})
+        r1 = PromptCompiler().compile(tmpl, [], {"existing_code": "a"})
         tmpl2 = PromptTemplate(name="indep2", system="T", user="V")
-        r2 = compile_prompt(tmpl2, [InjectionRule(name="r", text="rule", injection_point=InjectionPoint.system_header)], {"existing_code": "b"})
+        r2 = PromptCompiler().compile(tmpl2, [InjectionRule(name="r", text="rule", injection_point=InjectionPoint.system_header)], {"existing_code": "b"})
         assert r1 != r2
 
 

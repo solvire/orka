@@ -3,7 +3,7 @@
 import pytest
 from click.testing import CliRunner
 
-from orka.cli import cli
+from orka.cli import app as cli
 
 
 class TestPromptCommand:

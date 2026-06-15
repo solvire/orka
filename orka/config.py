@@ -18,12 +18,14 @@ API keys use standard environment variable names (``OPENAI_API_KEY``,
 ``DEEPSEEK_API_KEY``, etc.) so a single ``.env`` can be shared across tools.
 """
 
+import logging
 import os
-import sys
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 
 # ===================================================================
@@ -58,31 +60,29 @@ def _load_env(project_root: Path) -> None:
     This lets the user keep a project-local .env (automatic) or specify a
     central env file for cross-project API keys.
 
-    Raises
-    ------
-    SystemExit
-        If no ``.env`` file exists.
+    No longer fatal — if no .env is found, the module logs a debug message
+    and continues.  API key validation happens lazily when an LLM client
+    is instantiated (see :class:`~orka.clients.OrkaClientFactory`).
     """
     env_file = os.getenv("ORKA_ENV_FILE")
     if env_file:
         env_path = Path(env_file).resolve()
         if not env_path.is_file():
-            print(
-                f"[orka.config] FATAL: ORKA_ENV_FILE={env_file} is not a file or does not exist.",
-                file=sys.stderr,
+            logger.warning(
+                "ORKA_ENV_FILE=%s is not a file — skipping env loading.",
+                env_file,
             )
-            sys.exit(1)
+            return
         load_dotenv(env_path, override=False)
         return
 
     dotenv_path = project_root / ".env"
     if not dotenv_path.is_file():
-        print(
-            f"[orka.config] FATAL: No .env file found at {dotenv_path}. "
-            "Create a .env file or set ORKA_PROJECT_ROOT / ORKA_ENV_FILE.",
-            file=sys.stderr,
+        logger.debug(
+            "No .env file found at %s — using environment variables only.",
+            dotenv_path,
         )
-        sys.exit(1)
+        return
 
     load_dotenv(dotenv_path, override=False)
 
@@ -147,10 +147,9 @@ _configured_providers = [
 ]
 
 if not _configured_providers:
-    print(
-        "[orka.config] WARNING: No API keys found in environment. "
-        "Set at least one (e.g. DEEPSEEK_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY).",
-        file=sys.stderr,
+    logger.debug(
+        "No API keys found in environment. "
+        "Set at least one (e.g. DEEPSEEK_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY)."
     )
 
 # ===================================================================
@@ -160,8 +159,8 @@ if not _configured_providers:
 # Supported providers and their default model names.
 DEFAULT_MODELS: dict[str, str] = {
     "openai": "gpt-4o",
-    "deepseek": "deepseek-chat",
-    "together_ai": "MiniMaxAI/MiniMax-M2.7",
+    "deepseek": "deepseek-coder",
+    "together_ai": "zai-org/GLM-5.1",
     "gemini": "gemini-2.0-flash",
     "anthropic": "claude-sonnet-4-20250514",
     "openai_compat": "gpt-4o",  # catch-all for any OpenAI-compatible endpoint

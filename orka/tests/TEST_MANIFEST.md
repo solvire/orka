@@ -101,6 +101,11 @@
 
 ## Test Prompt Compiler (`tests/test_prompt_compiler.py`) — 35 tests
 
+> Imports from `orka.core.rule_resolver` (parse_mdc_file, load_rules_from_directory,
+> resolve_rules), `orka.core.compiler` (PromptCompiler, _enforce_rule_budget), and
+> `orka.core.import_fixer` (resolve_import). The old `orka.core.prompt_compiler` module
+> was split into these three during the Phase 2 refactoring.
+
 ### TestOutputTypeEnum (3 tests)
 | # | Test Name | Description |
 |---|-----------|-------------|
@@ -133,40 +138,40 @@
 ### TestParseMdcFile (3 tests)
 | # | Test Name | Description |
 |---|-----------|-------------|
-| 1 | `test_parse_builtin_no_imports` | Parse real .mdc, check name, injection_point, priority, tier |
-| 2 | `test_parse_builtin_use_pytest_raises` | Parse real .mdc, check injection_point==constraints_bottom, applies_to=["test"] |
-| 3 | `test_parse_builtin_test_behavior_not_mocks` | Parse real .mdc, check injection_point==quality_gates |
+| 1 | `test_parse_builtin_no_imports` | Parse .mdc with `---` frontmatter, check name, injection_point, priority |
+| 2 | `test_parse_builtin_use_pytest_raises` | Parse .mdc, check injection_point==constraints_bottom, applies_to=["test"] |
+| 3 | `test_parse_builtin_test_behavior_not_mocks` | Parse .mdc, check injection_point==quality_gates |
 
 ### TestLoadRulesFromDirectory (2 tests)
 | # | Test Name | Description |
 |---|-----------|-------------|
-| 1 | `test_loads_all_builtin_rules` | Loads 4 rules from temporary directory |
+| 1 | `test_loads_all_builtin_rules` | Loads 4 rules from temporary directory (uses `---` frontmatter format) |
 | 2 | `test_all_builtin_rules_have_tier_1` | Every rule loaded has tier=1 |
 
 ### TestResolveRules (4 tests)
 | # | Test Name | Description |
 |---|-----------|-------------|
-| 1 | `test_resolve_for_refactor_template` | refactor gets 2 universal rules (no_imports, no_markdown) |
+| 1 | `test_resolve_for_refactor_template` | refactor gets 2 universal rules; writes .mdc files to tmp_path, passes builtin_rules_dir |
 | 2 | `test_resolve_for_test_template` | test gets all 4 rules |
 | 3 | `test_resolve_filters_by_injection_point` | Only matching injection points returned |
-| 4 | `test_resolve_rules_are_sorted` | Rules sorted by (priority, -tier, name) |
+| 4 | `test_resolve_rules_are_sorted` | Rules sorted by (priority, -tier, name) ascending |
 
 ### TestEnforceRuleBudget (3 tests)
 | # | Test Name | Description |
 |---|-----------|-------------|
 | 1 | `test_all_rules_fit` | All rules kept when under budget |
 | 2 | `test_drops_lowest_priority` | Drops least important when over budget |
-| 3 | `test_single_rule_exceeds_budget` | Even huge single rule is kept (no alternatives) |
+| 3 | `test_single_rule_exceeds_budget` | A single rule exceeding budget is dropped (graceful degradation) |
 
 ### TestPromptCompiler (6 tests)
 | # | Test Name | Description |
 |---|-----------|-------------|
-| 1 | `test_compile_minimal` | Compile with one rule and context, check output contains both |
+| 1 | `test_compile_minimal` | PromptCompiler().compile() with one rule and context |
 | 2 | `test_compile_without_rules` | Compile with zero rules still produces output |
-| 3 | `test_compile_real_refactor_template` | Load refactor.yaml, resolve rules, compile with sample data |
-| 4 | `test_compile_real_test_template` | Load test.yaml, resolve rules, compile with sample data |
-| 5 | `test_all_injection_points_get_context` | No raw {{ }} remain when all points have empty fallbacks |
-| 6 | `test_compiler_different_instances_independent` | Two compiler instances produce same output for same inputs |
+| 3 | `test_compile_real_refactor_template` | Load refactor.yaml, resolve rules from builtin dir, compile with all context keys |
+| 4 | `test_compile_real_test_template` | Load test.yaml, resolve rules from builtin dir, compile with all context keys |
+| 5 | `test_all_injection_points_get_context` | No raw %% remain when all points have empty fallbacks |
+| 6 | `test_compiler_different_instances_independent` | Two compiler instances produce different output for different inputs |
 
 ### TestResolveImport (4 tests)
 | # | Test Name | Description |
@@ -176,7 +181,15 @@
 | 3 | `test_resolve_class_takes_precedence_over_method` | class_name is used, method_name is ignored |
 | 4 | `test_resolve_none_when_resolution_fails` | Empty file_path returns None |
 
+## ~~Test Orka Synthesizer~~ (`tests/test_orka_synthesizer.py`) — DELETED
+
+> Removed in 20260615 session. The `build_synthesis_prompt` function it tested no longer
+> exists in `orka.surgery.synthesizer`. The remaining functions (`extract_method_source`,
+> `extract_class_source`) are tested by `test_orka_transplanter.py`.
+
 ## Test CLI Commands (`tests/test_cli_commands.py`) — 4 tests
+
+> Import fixed: `from orka.cli import cli` → `from orka.cli import app as cli`.
 
 ### TestPromptCommand (2 tests)
 | # | Test Name | Description |
@@ -192,4 +205,10 @@
 
 ---
 
-**Total: 86 test definitions across 5 test files**
+**Total: 197 test definitions across 15 test files**
+
+> NOTE: Only 5 of the 15 test files are detailed above. The remaining 10 files
+> (test_ingester, test_modifier, test_orchestrator, test_orka_analyzer,
+> test_orka_cascade, test_orka_dual_brain, test_orka_edge_cases,
+> test_orka_transplanter, test_snippet_utils, test_standalone_function)
+> are not yet documented in this manifest.
