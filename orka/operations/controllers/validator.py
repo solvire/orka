@@ -20,10 +20,13 @@ import subprocess
 import sys
 from typing import Any, Optional
 
+import libcst as cst
+
 from orka.config import settings
 from orka.core.import_fixer import resolve_import
-from orka.core.validator import validate_code_snippet, validate_file
+from orka.core.validator import validate_code_snippet
 from orka.operations.helpers import extract_error_summary, truncate_error_summary
+from orka.surgery.modifier import SnippetImportExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +193,11 @@ def _assemble_test_file(
     """Build a complete test file with imports prepended.
 
     Uses the deterministic ``resolve_import`` (no LLM involved).
+
+    Before assembling the final file, the snippet is passed through
+    ``SnippetImportExtractor`` (CST-based) to strip any import statements
+    that the LLM may have erroneously included.  This prevents duplicate
+    imports in the output.
     """
     import_stmt = resolve_import(
         file_path=source_file,
@@ -222,7 +230,21 @@ def _assemble_test_file(
             f"Could not resolve import for {method_name} in {source_file}."
         )
 
-    result = f"import pytest\n{import_stmt}{snippet}\n"
+    # NOTE: no need to put `import pytest` at the top of the file anymore. It's outdated convention
+
+    # ── Strip import statements from LLM snippet ──────────────────────
+    # The LLM sometimes emits import statements inside the snippet despite
+    # being instructed not to.  Use SnippetImportExtractor (CST-based) to
+    # remove them cleanly — handles edge cases like ``import os; x = 1``.
+    try:
+        tree = cst.parse_module(snippet)
+        extractor = SnippetImportExtractor()
+        clean_tree = tree.visit(extractor)
+        clean_snippet = clean_tree.code
+    except Exception:
+        clean_snippet = snippet  # fallback — keep snippet as-is
+
+    result = f"{import_stmt}{clean_snippet}\n"
     return result
 
 

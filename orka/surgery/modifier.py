@@ -25,6 +25,42 @@ from orka.core.snippet_utils import sanitize_llm_output
 # ═══════════════════════════════════════════════════════════════════════
 
 
+class SnippetImportExtractor(cst.CSTTransformer):
+    """Extracts import statements from a CST snippet and removes them from the tree.
+
+    This transformer is the first step in "import hoisting". It walks the CST,
+    identifies ``Import`` and ``ImportFrom`` statements, and collects them in
+    the ``extracted_imports`` attribute. Simultaneously, it removes those import
+    nodes from their original locations:
+
+    * If a statement line contains *only* imports, the entire line is removed
+      from the parent (via ``cst.RemoveFromParent()``).
+    * If a statement line contains imports mixed with other code, only the
+      import nodes are stripped, leaving the rest of the line intact.
+
+    After visiting a tree, ``self.extracted_imports`` will contain all the
+    extracted import nodes, ready to be hoisted to the top of the target file.
+    """
+
+    def __init__(self) -> None:
+        self.extracted_imports: list[cst.BaseSmallStatement] = []
+
+    def leave_SimpleStatementLine(
+        self, original_node: cst.SimpleStatementLine, updated_node: cst.SimpleStatementLine
+    ) -> cst.SimpleStatementLine | cst.RemovalSentinel:
+        new_body: list[cst.BaseSmallStatement] = []
+        for stmt in updated_node.body:
+            if isinstance(stmt, (cst.Import, cst.ImportFrom)):
+                self.extracted_imports.append(stmt)
+            else:
+                new_body.append(stmt)
+
+        if not new_body:
+            return cst.RemoveFromParent()
+
+        return updated_node.with_changes(body=new_body)
+
+
 class MethodBodyReplacer(cst.CSTTransformer):
     """Replace the body of a single method/function, preserving everything else.
 

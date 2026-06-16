@@ -261,6 +261,15 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
     target_module = resolve_target_module(
         source_file, method_name, class_name, graph_db,
     )
+
+    # Normalise: when class_name is provided, resolve_target_module() may
+    # return "orka.surgery.modifier.SnippetImportExtractor" (class appended)
+    # but the import should use module="orka.surgery.modifier" and
+    # import the class name directly.
+    actual_module = target_module
+    if class_name and target_module and target_module.endswith(f".{class_name}"):
+        actual_module = target_module[: -(len(class_name) + 1)]
+
     if target_module:
         logger.debug("Resolved target module: %s", target_module)
 
@@ -298,9 +307,14 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
     graph_constraints = "\n\n".join(graph_constraints_parts) if graph_constraints_parts else "No known callers or dependencies."
 
     # Target import instruction
+    # For class methods, import the class; for standalone functions, import
+    # the function/method name.  actual_module is the true dotted module
+    # path (class name stripped from the tail) — see step 5b above.
     target_import = ""
-    if target_module and sig.get("name"):
-        target_import = f"from {target_module} import {sig['name']}"
+    if actual_module:
+        import_name = class_name or sig.get("name")
+        if import_name:
+            target_import = f"from {actual_module} import {import_name}"
 
     # Build signature/dockblock summary for the template placeholders
     docblock_text = sig["docblock"] if sig["docblock"] else "No docblock found."
@@ -358,7 +372,7 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
         "template_name": template_name,
         "rules_resolved": [r.name for r in resolved_rules],
         "signature": sig,
-        "target_module": target_module or "",
+        "target_module": actual_module or target_module or "",
         "target_import": target_import,
         "dependency_map": dep_map,
         "caller_constraints": caller_constraints,
