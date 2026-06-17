@@ -5,6 +5,7 @@ Usage:
     ./orka --help
     ./orka init
     ./orka init --continue-dev --provider together_ai
+    ./orka init --kilo
     ./orka scan
     ./orka inspect --id "File:path/to/file.py"
     ./orka extract --file src.py --cls MyClass --dest dst.py
@@ -114,6 +115,7 @@ def init(
     continue_dev: bool = typer.Option(False, "--continue-dev", help="Target Continue.dev"),
     cursor: bool = typer.Option(False, "--cursor", help="Target Cursor"),
     claude_code: bool = typer.Option(False, "--claude-code", help="Target Claude Code"),
+    kilo: bool = typer.Option(False, "--kilo", help="Target Kilo"),
     provider: Optional[str] = typer.Option(
         None, "--provider", help="Default LLM provider",
     ),
@@ -128,6 +130,8 @@ def init(
         editor = "cursor"
     elif claude_code:
         editor = "claude-code"
+    elif kilo:
+        editor = "kilo"
 
     success = run_init(editor=editor, provider=provider, force=force)
     if not success:

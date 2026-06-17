@@ -12,9 +12,6 @@ The .orka/ directory is git-ignored by default (added to .gitignore on init).
 
 import json
 import logging
-import os
-import shutil
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -24,36 +21,19 @@ from rich.panel import Panel
 from rich.prompt import Prompt, Confirm
 
 from orka.config import settings
+from orka.core.constants import (
+    DEFAULT_EDITOR_TEMPLATE,
+    EDITOR_PROMPT_CHOICES,
+    EDITOR_REGISTRY,
+    PROVIDER_KEY_ATTR_MAP,
+    SUPPORTED_PROVIDERS,
+)
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
 logger = logging.getLogger("orka.init")
-
-EDITOR_CHOICES = {
-    "1": ("Continue.dev", ".continue/rules/orka-orchestrator.mdc"),
-    "2": ("Cursor", ".cursor/rules/orka-orchestrator.mdc"),
-    "3": ("Claude Code", ".claude/rules/CLAUDE.md"),
-}
-
-SUPPORTED_PROVIDERS = [
-    "openai",
-    "deepseek",
-    "together_ai",
-    "gemini",
-    "anthropic",
-    "openai_compat",
-]
-
-PROVIDER_KEY_MAP = {
-    "openai": "OPENAI_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-    "together_ai": "TOGETHER_API_KEY",
-    "gemini": "GEMINI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai_compat": "API_KEY",
-}
 
 # ---------------------------------------------------------------------------
 # Status helpers
@@ -136,28 +116,26 @@ def _ensure_gitignore(project_root: Path) -> None:
 # Rule writer
 # ---------------------------------------------------------------------------
 
-# Path to the template file, relative to the orka package root
-_TEMPLATE_PATH = Path("docs/templates/continue-rule.mdc")
-
-
-def _resolve_template() -> Optional[Path]:
+def _resolve_template(editor: str = "") -> Optional[Path]:
     """
-    Find the template file. Works whether orka is installed editable or from source.
-    Searches:
-      1. Next to the package source (editable install)
-      2. In sys.path for the installed package
+    Find the template file for the given editor.
+    Works whether orka is installed editable or from source.
     """
+    rel_path = (
+        EDITOR_REGISTRY.get(editor, {}).get("template_path") or DEFAULT_EDITOR_TEMPLATE
+    )
+
     # Try relative to this file (works for editable install)
     here = Path(__file__).resolve().parent  # orka/core/
     pkg_root = here.parent.parent  # orka/ source root
-    candidate = pkg_root / _TEMPLATE_PATH
+    candidate = pkg_root / rel_path
     if candidate.exists():
         return candidate
 
     # Try relative to the installed package
     import orka
     inst_root = Path(orka.__file__).resolve().parent.parent
-    candidate = inst_root / _TEMPLATE_PATH
+    candidate = inst_root / rel_path
     if candidate.exists():
         return candidate
 
@@ -185,17 +163,11 @@ def _write_rule(target_path: Path, template_path: Path) -> bool:
 
 def _check_provider(provider: str) -> Tuple[bool, str]:
     """Check if the chosen provider has an API key set."""
-    if provider == "together_ai":
-        if not settings.TOGETHER_API_KEY:
-            return False, f"No TOGETHER_API_KEY found in .env"
-    elif provider == "openai_compat":
-        if not settings.API_KEY:
-            return False, f"No API_KEY found in .env"
-    else:
-        key_var = PROVIDER_KEY_MAP.get(provider, "").upper()
-        val = getattr(settings, PROVIDER_KEY_MAP.get(provider, ""), "")
+    key_attr = PROVIDER_KEY_ATTR_MAP.get(provider, "")
+    if key_attr:
+        val = getattr(settings, key_attr, "")
         if not val:
-            return False, f"No {key_var} found in .env"
+            return False, f"No {key_attr} found in .env"
 
     return True, f"Provider '{provider}' ready"
 
@@ -204,7 +176,7 @@ def _detect_existing_providers() -> List[str]:
     """Return list of providers that already have API keys configured."""
     available = []
     for prov in SUPPORTED_PROVIDERS:
-        key_attr = PROVIDER_KEY_MAP.get(prov, "")
+        key_attr = PROVIDER_KEY_ATTR_MAP.get(prov, "")
         if key_attr and getattr(settings, key_attr, ""):
             available.append(prov)
     return available
@@ -223,7 +195,7 @@ def run_init(
     Run the interactive (or flag-driven) initialization.
 
     Args:
-        editor: One of "continue-dev", "cursor", "claude-code", or None for prompt.
+        editor: One of the EDITOR_REGISTRY keys, or None for prompt.
         provider: One of SUPPORTED_PROVIDERS, or None for prompt.
         force: Re-write rule even if already present.
 
@@ -249,37 +221,31 @@ def run_init(
     console.print()
 
     # -- Step 1: Editor selection --
-    editor_map = {
-        "continue-dev": "Continue.dev",
-        "cursor": "Cursor",
-        "claude-code": "Claude Code",
-    }
-    editor_path_map = {
-        "continue-dev": ".continue/rules/orka-orchestrator.mdc",
-        "cursor": ".cursor/rules/orka-orchestrator.mdc",
-        "claude-code": ".claude/rules/CLAUDE.md",
-    }
+    editor_slugs = list(EDITOR_REGISTRY.keys())
 
-    if editor and editor not in editor_map:
+    if editor and editor not in EDITOR_REGISTRY:
         console.print(f"[bold red]Unknown editor '{editor}'.[/bold red]")
-        console.print(f"Supported: {', '.join(editor_map.keys())}")
+        console.print(f"Supported: {', '.join(editor_slugs)}")
         return False
 
     if not editor:
         console.print("[bold]Which AI coding tool are you using?[/bold]")
-        for key, (name, _) in EDITOR_CHOICES.items():
+        for key, (name, _) in EDITOR_PROMPT_CHOICES.items():
             console.print(f"  [{key}] {name}")
-        choice = Prompt.ask("Select", choices=list(EDITOR_CHOICES.keys()), default="1")
-        editor_name, rel_path = EDITOR_CHOICES[choice]
+        choice = Prompt.ask("Select", choices=list(EDITOR_PROMPT_CHOICES.keys()), default="1")
+        editor_name, rel_path = EDITOR_PROMPT_CHOICES[choice]
+        editor = editor_slugs[int(choice) - 1]
     else:
-        editor_name = editor_map[editor]
-        rel_path = editor_path_map[editor]
+        cfg = EDITOR_REGISTRY[editor]
+        editor_name = cfg["display_name"]
+        rel_path = cfg["rule_path"]
 
     # -- Step 2: Write the rule file --
-    template_path = _resolve_template()
+    template_path = _resolve_template(editor)
     if not template_path:
         console.print("[bold red]Template file not found![/bold red]")
-        console.print(f"Expected at: {_TEMPLATE_PATH} relative to package root")
+        expected_rel = EDITOR_REGISTRY.get(editor, {}).get("template_path") or DEFAULT_EDITOR_TEMPLATE
+        console.print(f"Expected at: {expected_rel} relative to package root")
         return False
 
     target_path = project_root / rel_path
@@ -334,7 +300,6 @@ def run_init(
 
     # -- Step 5: Update settings.DEFAULT_PROVIDER to match --
     if provider != settings.DEFAULT_PROVIDER:
-        # Note: we don't modify .env here — just store preference in status
         console.print(f"[dim]Default provider set to '{provider}' in status (not persisted to .env)[/dim]")
 
     # -- Step 6: Save status --

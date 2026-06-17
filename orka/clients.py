@@ -20,6 +20,11 @@ import re
 from typing import Optional, Protocol, runtime_checkable
 
 from orka.config import settings
+from orka.core.constants import (
+    PROVIDER_DEFAULT_MODELS,
+    PROVIDER_MODEL_OVERRIDE_ATTR_MAP,
+    SUPPORTED_PROVIDERS,
+)
 
 logger = logging.getLogger("orka.clients")
 
@@ -57,18 +62,6 @@ class _TogetherWrapper:
         self._timeout = timeout
 
     def invoke(self, messages: list) -> object:
-        """
-        Convert LangChain messages → Together dicts → return AIMessage-like object.
-
-        Parameters
-        ----------
-        messages : list of langchain_core.messages.BaseMessage
-
-        Returns
-        -------
-        The response ``Choice.message`` from ``together.Together.chat.completions.create``.
-        It has ``.content`` which is all ``OrkaClientFactory`` callers consume.
-        """
         from langchain_core.messages import AIMessage
 
         together_messages = []
@@ -101,15 +94,6 @@ class OrkaClientFactory:
         response = llm.invoke([HumanMessage(content="hello")])
         print(response.content)
     """
-
-    _PROVIDER_REGISTRY: dict[str, str] = {
-        "openai": "openai",
-        "deepseek": "deepseek",
-        "together_ai": "together_ai",
-        "gemini": "gemini",
-        "anthropic": "anthropic",
-        "openai_compat": "openai_compat",
-    }
 
     @classmethod
     def create(
@@ -166,7 +150,7 @@ class OrkaClientFactory:
 
         raise ValueError(
             f"Unknown provider {provider!r}. "
-            f"Supported: {', '.join(sorted(cls._PROVIDER_REGISTRY))}"
+            f"Supported: {', '.join(sorted(SUPPORTED_PROVIDERS))}"
         )
 
     # -- model resolution --------------------------------------------
@@ -178,17 +162,11 @@ class OrkaClientFactory:
         Resolution order (first match wins):
         1. Provider-specific model override (``DEEPSEEK_MODEL``, etc.)
         2. Orka tier env vars (``ORKA_SMART_MODEL``, etc.)
-        3. Default from :data:`DEFAULT_MODELS` registry for this provider
+        3. Default from :data:`PROVIDER_DEFAULT_MODELS` registry for this provider
         """
         # 1. Provider-specific model override (DEEPSEEK_MODEL, TOGETHER_MODEL, etc.)
-        provider_var_map: dict[str, str] = {
-            "openai": settings.OPENAI_MODEL,
-            "deepseek": settings.DEEPSEEK_MODEL,
-            "together_ai": settings.TOGETHER_MODEL,
-            "gemini": settings.GEMINI_MODEL,
-            "anthropic": settings.ANTHROPIC_MODEL,
-        }
-        provider_override = provider_var_map.get(provider, "")
+        override_attr = PROVIDER_MODEL_OVERRIDE_ATTR_MAP.get(provider, "")
+        provider_override = getattr(settings, override_attr, "") if override_attr else ""
         if provider_override:
             return provider_override
 
@@ -201,8 +179,7 @@ class OrkaClientFactory:
             return orka_var
 
         # 3. Default from registry for this specific provider
-        from orka.config import DEFAULT_MODELS
-        provider_default = DEFAULT_MODELS.get(provider, "")
+        provider_default = PROVIDER_DEFAULT_MODELS.get(provider, "")
         if provider_default:
             return provider_default
 
@@ -318,7 +295,6 @@ class OrkaClientFactory:
             temperature=temperature,
             timeout=timeout,
         )
-
 
     @classmethod
     def check_provider_health(cls, provider: str) -> dict:

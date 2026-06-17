@@ -9,7 +9,6 @@ Refactor, test, and transplant code with surgical precision — powered by AST a
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)]()
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Security: Safety CLI](https://img.shields.io/badge/security-Safety_CLI-blue.svg)](docs/SECURITY_AUDIT.md)
 
 [Installation](#installation) · [Quick Start](#quick-start) · [Commands](#commands) · [Configuration](#configuration) · [Architecture](#architecture)
 
@@ -296,7 +295,6 @@ Feedback and bug reports are welcome — this is the phase where real-world usag
 
 Orka is scanned regularly with:
 
-- **[Safety CLI](https://safetycli.com/)** — dependency vulnerability monitoring
 - **Bandit** — Python static security analysis
 - **TruffleHog** — git history secret leak detection
 - **pip-audit** — supply chain vulnerability audit

@@ -23,8 +23,9 @@ from typing import Any, Optional
 import libcst as cst
 
 from orka.config import settings
-from orka.core.import_fixer import resolve_import
+from orka.core.import_fixer import auto_import, resolve_import
 from orka.core.validator import validate_code_snippet
+from orka.operations.graph_helpers import get_graph_db
 from orka.operations.helpers import extract_error_summary, truncate_error_summary
 from orka.surgery.modifier import SnippetImportExtractor
 
@@ -165,6 +166,10 @@ def _assemble_refactor_file(
 ) -> str:
     """Use LibCST to patch the snippet into the source file.
 
+    After patching, runs the auto-import step (``auto_import``) to detect
+    undefined names in the patched code and inject the correct imports
+    via the Graph DB + LibCST's ``AddImportsVisitor``.
+
     Returns the full patched file content as a string.
     """
     from orka.surgery.modifier import preview_patch
@@ -181,6 +186,16 @@ def _assemble_refactor_file(
             f"LibCST could not find {target_node_id} in {source_file}. "
             "The method/function may have been renamed or removed."
         )
+
+    # ── Auto-import step ──────────────────────────────────────────────
+    # Detect undefined names in the patched file and resolve them via the
+    # Graph DB before file AST validation and pytest.
+    try:
+        graph_db = get_graph_db()
+        patched = auto_import(patched, file_path=source_file, graph_db=graph_db)
+    except Exception:
+        logger.debug("Auto-import step failed — continuing with patched code as-is.")
+
     return patched
 
 

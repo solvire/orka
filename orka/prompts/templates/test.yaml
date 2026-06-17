@@ -66,6 +66,9 @@ user: |
   ### INTERNAL DEPENDENCIES AVAILABLE (use these exact signatures for mocking):
   %%dependency_signatures%%
 
+  ### FUNCTION USAGE GUIDE (how to construct parameters for this function):
+  %%data_construction_guide%%
+
   ### SOURCE FILE:
   %%file_path%%
 
@@ -91,9 +94,9 @@ user: |
      Do NOT use ``tmpdir`` (deprecated) or ``tempfile``.
   8. Do NOT use ``monkeypatch`` or ``mocker`` — prefer dependency injection
      or restructuring the code to avoid mocking.
-  9. Test the public API only — avoid testing private methods (``_prefix``).
-  10. Each test function MUST be self-contained — no shared module-level
-      variables or fixtures that are not built-in.
+  9. Do NOT use ``self`` in test function signatures — define all tests as
+     standalone functions (``def test_xxx():``), never inside a class.
+
 
   ### PYTHON TEST FUNCTIONS (RAW PYTHON ONLY):
 

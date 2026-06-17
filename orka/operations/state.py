@@ -77,6 +77,11 @@ class SurgeryState(TypedDict):
     by the target). Empty string if no dependencies found in the
     graph DB. Populated by ``gather_context``."""
 
+    data_construction_guide: str
+    """Fast LLM-generated guide explaining how to construct valid inputs
+    for the target function. Empty string if generation failed or was
+    skipped. Populated by ``gather_context``."""
+
     original_file_backup: Optional[str]
     """Backup of target_output_file before any writes. None if file didn't exist."""
 

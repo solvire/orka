@@ -14,6 +14,9 @@ import os
 import re
 from typing import Any
 
+import libcst as cst
+
+from orka.clients import OrkaLangChainClient
 from orka.config import settings
 from orka.operations.graph_helpers import (
     extract_dependency_signatures,
@@ -23,6 +26,99 @@ from orka.operations.helpers import load_template
 from orka.surgery.synthesizer import extract_class_source, extract_method_source
 
 logger = logging.getLogger(__name__)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Type source extraction — finds class definitions for parameter types
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _collect_parameter_types(
+    existing_code: str,
+    graph_db: object | None,
+) -> dict[str, str]:
+    """Extract parameter type names from a function and look up their definitions.
+
+    Uses LibCST to find the function signature, then for each typed parameter
+    searches the graph DB for a matching class node and reads its source code.
+
+    Returns ``{type_name: source_code}`` — a map of type names to their
+    class/type definitions.  Unresolved types are omitted from the map.
+    """
+    if not existing_code or not graph_db:
+        return {}
+
+    try:
+        tree = cst.parse_module(existing_code)
+    except Exception:
+        return {}
+
+    class _ParamTypeCollector(cst.CSTVisitor):
+        def __init__(self) -> None:
+            self.type_names: set[str] = set()
+
+        def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
+            for param in node.params.params:
+                if hasattr(param, "annotation") and param.annotation:
+                    ann = param.annotation.annotation
+                    # Simple name like ``int`` or ``OrkaGraphDB``
+                    if isinstance(ann, cst.Name):
+                        self.type_names.add(ann.value)
+                    # Attribute like ``Optional[OrkaGraphDB]`` — extract the inner
+                    elif isinstance(ann, cst.Subscript):
+                        self._extract_from_subscript(ann)
+            return False  # Don't descend into nested functions
+
+        def _extract_from_subscript(self, node: cst.Subscript) -> None:
+            """Extract type names from e.g. ``Optional[OrkaGraphDB]`` or ``list[int]``."""
+            if isinstance(node.value, cst.Name):
+                self.type_names.add(node.value.value)  # Optional, list, dict
+            if node.slice:
+                for slice_elem in node.slice:
+                    if isinstance(slice_elem, cst.Index) and isinstance(slice_elem.value, cst.Name):
+                        self.type_names.add(slice_elem.value.value)
+                    elif isinstance(slice_elem, cst.Index) and isinstance(slice_elem.value, cst.Subscript):
+                        self._extract_from_subscript(slice_elem.value)
+
+    collector = _ParamTypeCollector()
+    tree.visit(collector)
+
+    # Filter to only names that look like types (capitalised) and skip builtins
+    candidate_names = {
+        n for n in collector.type_names
+        if n[0].isupper() if n
+    }
+
+    result: dict[str, str] = {}
+    for type_name in candidate_names:
+        for node_id, attrs in graph_db.graph.nodes(data=True):
+            if attrs.get("node_type") == "class" and attrs.get("name") == type_name:
+                file_path = attrs.get("file_path", "")
+                lineno = attrs.get("lineno")
+                if file_path and lineno and not file_path.startswith("external"):
+                    source = _read_class_source(file_path, type_name)
+                    if source:
+                        result[type_name] = source
+                        break
+
+    return result
+
+
+def _read_class_source(file_path: str, class_name: str) -> str | None:
+    """Read a single class definition from a file path.
+
+    Uses ``extract_class_source`` from the synthesizer module, which
+    handles LibCST tree walking.
+    """
+    try:
+        project_root = str(settings.PROJECT_ROOT)
+        full_path = file_path if os.path.isabs(file_path) else os.path.join(project_root, file_path)
+        if os.path.exists(full_path):
+            return extract_class_source(full_path, class_name)
+    except Exception as exc:
+        logger.debug("Could not read class source for %s: %s", class_name, exc)
+    return None
+
 
 # ── Internal helpers ──────────────────────────────────────────────────
 
@@ -106,12 +202,6 @@ def _generate_smart_query(
             if len(parts) > 1:
                 user_part = parts[1]
 
-        # Invoke the fast LLM
-        # The compiled prompt already includes the system rules (from the
-        # hyde_query template), so we pass it as the main prompt without
-        # a separate system_instruction.
-        from orka.clients import OrkaLangChainClient
-
         client = OrkaLangChainClient(model_tier="fast")
         query = client.generate_code(prompt=compiled)
         cleaned = query.strip().strip('"').strip("'").strip()
@@ -140,6 +230,69 @@ def _build_fallback_query(
         parts = [p for p in (requirements, docblock) if p]
         phrase = parts[0] if parts else method_name
         return f"refactoring a function that {phrase}"
+
+
+def generate_data_construction_guide(
+    existing_code: str,
+    graph_db: object | None = None,
+) -> str:
+    """Use the fast LLM to explain how to construct valid inputs for a function.
+
+    Two-stage enrichment:
+
+    1. **Type source extraction** — looks up each parameter's type annotation
+       in the Graph DB and reads its class definition source.
+    2. **Fast LLM analysis** — sends the function code together with the
+       resolved type definitions to produce a short guide explaining what
+       data each parameter needs and how to construct it.
+
+    Returns an empty string on failure (non-fatal, caller should degrade
+    gracefully).
+    """
+    if not existing_code or len(existing_code) < 50:
+        return ""
+
+    # Stage 1: resolve parameter type definitions from the graph DB
+    type_definitions = _collect_parameter_types(existing_code, graph_db)
+
+    # Build the prompt — include type definitions if available
+    prompt_parts = [
+        "You are a Python data architect. Look at the following function "
+        "and write a brief 'Data Construction Guide' (3-5 sentences) that "
+        "explains:\n\n"
+        "- What each parameter expects (concrete type, class, or protocol)\n"
+        "- How to construct a valid instance of each parameter (import path,\n"
+        "  constructor arguments, factory calls)\n"
+        "- Whether each parameter can be None or needs a real object\n"
+        "- How the function uses each parameter internally\n\n"
+        "Do NOT write test code or implementation code. Write only the guide.\n\n"
+        "### FUNCTION TO ANALYSE:\n"
+        f"```python\n{existing_code}\n```",
+    ]
+
+    if type_definitions:
+        type_section = "\n\n### PARAMETER TYPE DEFINITIONS (source code of referenced classes):\n"
+        for type_name, source in type_definitions.items():
+            type_section += f"\n--- {type_name} ---\n```python\n{source}\n```\n"
+        prompt_parts.append(type_section)
+
+    prompt = "\n".join(prompt_parts)
+
+    try:
+        client = OrkaLangChainClient(model_tier="fast")
+        guide = client.generate_code(prompt=prompt)
+        guide = guide.strip().strip('"').strip("'").strip()
+        if guide:
+            logger.debug(
+                "Data construction guide generated (%d chars, %d type defs)",
+                len(guide),
+                len(type_definitions),
+            )
+            return guide
+    except Exception as exc:
+        logger.debug("Data construction guide generation failed (non-fatal): %s", exc)
+
+    return ""
 
 
 def _self_exclusion_filter(
@@ -295,11 +448,22 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         logger.warning("Graph DB dependency lookup failed (non-fatal): %s", exc)
 
+    # ── 8. Data construction guide ────────────────────────────────────
+    data_construction_guide = ""
+    graph_db = get_graph_db()
+    try:
+        data_construction_guide = generate_data_construction_guide(
+            existing_code, graph_db,
+        )
+    except Exception as exc:
+        logger.debug("Data construction guide failed (non-fatal): %s", exc)
+
     return {
         "existing_code": existing_code,
         "class_context": class_context,
         "similar_examples": similar_examples,
         "dependency_signatures": dependency_signatures,
+        "data_construction_guide": data_construction_guide,
         "original_file_backup": original_file_backup,
     }
 

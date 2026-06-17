@@ -1,5 +1,4 @@
-"""
-Standalone configuration loader for the Orka CLI.
+"""Standalone configuration loader for the Orka CLI.
 
 Loads .env from the current working directory (where ``orka`` is invoked),
 or from the file specified by the ``ORKA_ENV_FILE`` environment variable.
@@ -24,6 +23,14 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
+
+from orka.core.constants import (
+    API_KEY_ATTRS,
+    PROVIDER_API_BASE_ATTR_MAP,
+    PROVIDER_DEFAULT_MODELS,
+    PROVIDER_KEY_ATTR_MAP,
+    PROVIDER_MODEL_OVERRIDE_ATTR_MAP,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +77,7 @@ def _load_env(project_root: Path) -> None:
         if not env_path.is_file():
             logger.warning(
                 "ORKA_ENV_FILE=%s is not a file — skipping env loading.",
-                env_file,
+                env_path,
             )
             return
         load_dotenv(env_path, override=False)
@@ -130,20 +137,10 @@ _load_env(_PROJECT_ROOT)
 # Validation — fail early on missing critical config
 # ===================================================================
 
-_REQUIRED_VARS = [
-    # At least ONE API key must be present (depending on provider)
-    ("OPENAI_API_KEY", "OpenAI"),
-    ("DEEPSEEK_API_KEY", "DeepSeek"),
-    ("TOGETHER_API_KEY", "Together AI"),
-    ("GEMINI_API_KEY", "Gemini"),
-    ("ANTHROPIC_API_KEY", "Anthropic"),
-    ("OPENROUTER_API_KEY", "OpenRouter"),
-    ("GROQ_API_KEY", "Groq"),
-    ("API_KEY", "Generic OpenAI-compatible"),
-]
-
 _configured_providers = [
-    label for var, label in _REQUIRED_VARS if os.getenv(var)
+    label
+    for attr, label in API_KEY_ATTRS
+    if os.getenv(attr)
 ]
 
 if not _configured_providers:
@@ -152,19 +149,9 @@ if not _configured_providers:
         "Set at least one (e.g. DEEPSEEK_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY)."
     )
 
-# ===================================================================
-# Provider registry
-# ===================================================================
-
-# Supported providers and their default model names.
-DEFAULT_MODELS: dict[str, str] = {
-    "openai": "gpt-4o",
-    "deepseek": "deepseek-coder",
-    "together_ai": "zai-org/GLM-5.1",
-    "gemini": "gemini-2.0-flash",
-    "anthropic": "claude-sonnet-4-20250514",
-    "openai_compat": "gpt-4o",  # catch-all for any OpenAI-compatible endpoint
-}
+# NOTE: DEFAULT_MODELS is now orka.core.constants.PROVIDER_DEFAULT_MODELS.
+# Kept as a module-level alias for backward compatibility.
+DEFAULT_MODELS = PROVIDER_DEFAULT_MODELS
 
 
 # ===================================================================
@@ -261,18 +248,12 @@ class Settings:
 
     def _provider_default_model(self) -> str:
         """Return the default model name for the current provider."""
-        return DEFAULT_MODELS.get(self.DEFAULT_PROVIDER, "gpt-4o")
+        return PROVIDER_DEFAULT_MODELS.get(self.DEFAULT_PROVIDER, "gpt-4o")
 
     def _provider_model_override(self) -> str:
         """Return a provider-specific model override if set."""
-        provider_map: dict[str, str] = {
-            "openai": self.OPENAI_MODEL,
-            "deepseek": self.DEEPSEEK_MODEL,
-            "together_ai": self.TOGETHER_MODEL,
-            "gemini": self.GEMINI_MODEL,
-            "anthropic": self.ANTHROPIC_MODEL,
-        }
-        return provider_map.get(self.DEFAULT_PROVIDER, "")
+        attr_name = PROVIDER_MODEL_OVERRIDE_ATTR_MAP.get(self.DEFAULT_PROVIDER, "")
+        return getattr(self, attr_name, "") if attr_name else ""
 
     @property
     def smart_model(self) -> str:
@@ -310,27 +291,16 @@ class Settings:
             3. Empty string
         """
         prov = provider or self.DEFAULT_PROVIDER
-        key_map: dict[str, str] = {
-            "openai": self.OPENAI_API_KEY,
-            "deepseek": self.DEEPSEEK_API_KEY,
-            "together_ai": self.TOGETHER_API_KEY,
-            "gemini": self.GEMINI_API_KEY,
-            "anthropic": self.ANTHROPIC_API_KEY,
-            "openai_compat": self.API_KEY,
-        }
-        return key_map.get(prov, self.API_KEY)
+        attr_name = PROVIDER_KEY_ATTR_MAP.get(prov, "API_KEY")
+        return getattr(self, attr_name, "") or self.API_KEY
 
     # -- API base resolution -----------------------------------------
 
     def get_api_base(self, provider: Optional[str] = None) -> str:
         """Return the API base URL for *provider*."""
         prov = provider or self.DEFAULT_PROVIDER
-        base_map: dict[str, str] = {
-            "openai": self.OPENAI_API_BASE,
-            "deepseek": self.DEEPSEEK_API_BASE,
-            "openai_compat": self.API_BASE,
-        }
-        return base_map.get(prov, self.API_BASE)
+        attr_name = PROVIDER_API_BASE_ATTR_MAP.get(prov, "API_BASE")
+        return getattr(self, attr_name, self.API_BASE)
 
     # -- Diagnostics -------------------------------------------------
 
@@ -344,12 +314,12 @@ class Settings:
             "",
             "  API Keys found:",
         ]
-        for var, label in _REQUIRED_VARS:
-            val = getattr(self, var, "")
+        for attr, label in API_KEY_ATTRS:
+            val = getattr(self, attr, "")
             if val:
-                lines.append(f"    ✓ {label} ({var})")
+                lines.append(f"    ✓ {label} ({attr})")
             else:
-                lines.append(f"    ✗ {label} ({var}) — not set")
+                lines.append(f"    ✗ {label} ({attr}) — not set")
         lines.extend([
             "",
             f"  Default provider : {self.DEFAULT_PROVIDER}",
@@ -379,4 +349,3 @@ class Settings:
 
 # Module-level singleton so consumers can do:  from orka.config import settings
 settings = Settings()
-

@@ -28,18 +28,19 @@ from orka.core.snippet_utils import sanitize_llm_output
 class SnippetImportExtractor(cst.CSTTransformer):
     """Extracts import statements from a CST snippet and removes them from the tree.
 
-    This transformer is the first step in "import hoisting". It walks the CST,
-    identifies ``Import`` and ``ImportFrom`` statements, and collects them in
-    the ``extracted_imports`` attribute. Simultaneously, it removes those import
-    nodes from their original locations:
+    The LLM is instructed not to include imports in the method body (see
+    ``no_imports_in_body.mdc`` rule), but often disobeys.  This transformer
+    strips them out cleanly — the imports are **discarded**, not hoisted:
 
     * If a statement line contains *only* imports, the entire line is removed
       from the parent (via ``cst.RemoveFromParent()``).
     * If a statement line contains imports mixed with other code, only the
       import nodes are stripped, leaving the rest of the line intact.
 
-    After visiting a tree, ``self.extracted_imports`` will contain all the
-    extracted import nodes, ready to be hoisted to the top of the target file.
+    The refactor pipeline uses ``auto_import()`` (a pyflakes-based scan) to
+    detect genuinely missing imports after the body swap and resolves them
+    via the Graph DB.  The testgen pipeline uses ``resolve_import()`` for
+    deterministic import assembly instead.
     """
 
     def __init__(self) -> None:

@@ -7,7 +7,7 @@ logger = logging.getLogger("OrkaVectorDB")
 class OrkaVectorDB:
     def __init__(self, persist_dir: str = ".orka_chromadb"):
         # Suppress ChromaDB's noisy telemetry/startup logs
-        os.environ["CHROMA_SERVER_NOFILE"] = "65535" 
+        # os.environ["CHROMA_SERVER_NOFILE"] = "65535" 
         
         self.client = chromadb.PersistentClient(path=persist_dir)
         # We use a single collection for the codebase

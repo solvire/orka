@@ -361,6 +361,7 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
         "caller_constraints": render_caller_constraints_table(caller_constraints),
         "dependency_signatures": dependency_signatures,
         "similar_examples": similar_examples_text,
+        "data_construction_guide": state.get("data_construction_guide", ""),
     }
 
     # ── 8. Compile ────────────────────────────────────────────────────
