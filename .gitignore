@@ -59,3 +59,14 @@ credentials/
 
 .aider*
 .orka_*
+
+# ── Kilo config (agents/commands/scripts are tracked; secrets & state are not) ──
+.kilo/kilo.json
+.kilo/kilo.jsonc
+.kilo/agent-manager.json
+.kilo/worktrees/
+.kilo/node_modules/
+.kilo/package.json
+.kilo/package-lock.json
+kilo.json
+kilo.jsonc
