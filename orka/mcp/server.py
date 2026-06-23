@@ -83,6 +83,7 @@ def _run_surgery_safe(
             "draft_snippet": "",
             "draft_file_content": "",
             "validation_output": "",
+            "previous_validation_output": "",
             "is_valid": False,
             "original_draft_code": "",
             "test_file_target": target_output if run_pytest else None,

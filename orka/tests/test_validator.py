@@ -440,6 +440,7 @@ class TestValidatorControllerExecute:
         assert result == {
             "is_valid": False,
             "validation_output": "No draft snippet to validate.",
+            "previous_validation_output": "",
         }
         # No draft_file_content key on the short-circuit path.
         assert "draft_file_content" not in result

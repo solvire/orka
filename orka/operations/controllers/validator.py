@@ -46,6 +46,7 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
         return {
             "is_valid": False,
             "validation_output": "No draft snippet to validate.",
+            "previous_validation_output": state.get("validation_output", ""),
         }
 
     passed, output, assembled = validate_four_gates(
@@ -61,7 +62,11 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
         test_file_target=state.get("test_file_target"),
     )
 
-    result: dict[str, Any] = {"is_valid": passed, "validation_output": output}
+    result: dict[str, Any] = {
+        "is_valid": passed,
+        "validation_output": output,
+        "previous_validation_output": state.get("validation_output", ""),
+    }
     if assembled is not None:
         result["draft_file_content"] = assembled
     return result

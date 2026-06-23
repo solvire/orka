@@ -96,6 +96,11 @@ class SurgeryState(TypedDict):
     validation_output: str
     """Truncated error output from AST parse or pytest."""
 
+    previous_validation_output: str
+    """Error output from the previous validation pass. Used by the router
+    to detect when the fixer is stuck (same error twice = bail early
+    instead of wasting remaining iterations)."""
+
     is_valid: bool
     """True when both AST gates pass and (if not dry-run) pytest passes."""
 

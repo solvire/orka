@@ -92,7 +92,8 @@ def _router(state: SurgeryState) -> str:
     Returns
     -------
     str
-        ``"end"`` if validation passed or max iterations reached.
+        ``"end"`` if validation passed, max iterations reached, a fatal
+        error occurred, or the fixer is stuck (same validation error twice).
         ``"fix_draft"`` if validation failed and we can retry.
     """
     if state.get("is_valid", False):
@@ -115,6 +116,23 @@ def _router(state: SurgeryState) -> str:
             "Max iterations (%d) reached for %s — ending with rollback.",
             state["max_iterations"],
             state.get("target_node_id", "unknown"),
+        )
+        return "end"
+
+    # ── Early termination: detect a stuck fixer ────────────────────────
+    # If the current validation error is the same as the previous one,
+    # the fixer couldn't make progress. Bail instead of wasting the
+    # remaining iteration(s) on the same error.
+    current_error = (state.get("validation_output") or "").strip()
+    previous_error = (state.get("previous_validation_output") or "").strip()
+    if current_error and previous_error and current_error == previous_error:
+        logger.warning(
+            "Stuck fixer for %s — same validation error twice, "
+            "ending early (iteration %d/%d). Error: %s",
+            state.get("target_node_id", "unknown"),
+            state["iteration_count"],
+            state["max_iterations"],
+            current_error[:120],
         )
         return "end"
 
@@ -247,6 +265,7 @@ def run_surgery(
         "draft_file_content": "",
         # Validation
         "validation_output": "",
+        "previous_validation_output": "",
         "is_valid": False,
         "original_draft_code": "",
         "test_file_target": test_file_target,
