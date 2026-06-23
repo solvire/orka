@@ -236,52 +236,6 @@ def _inject_imports(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Shared helpers
-# ═══════════════════════════════════════════════════════════════════════
-
-
-def _module_from_node_id(node_id: str) -> Optional[str]:
-    """Extract the dotted module path from a graph node ID.
-
-    Handles three node types:
-
-    - ``Class:myapp.models.User`` → ``"myapp.models"``
-    - ``Function:app.helpers.calculate_discount`` → ``"app.helpers"``
-    - ``Method:orka.core.compiler.PromptCompiler.compile``
-      → ``"orka.core.compiler"`` (strips both class and method name)
-
-    Returns ``None`` when extraction is impossible (no colon, empty path,
-    single-part path, etc.).
-    """
-    if ":" not in node_id:
-        return None
-    without_type = node_id.split(":", 1)[1]
-
-    # Guard: empty after type prefix
-    if not without_type:
-        return None
-
-    parts = without_type.split(".")
-
-    # A valid module path has at least 2 parts: module.obj
-    if len(parts) < 2:
-        return None
-
-    # Method nodes are "module.ClassName.method" — strip last 2 parts
-    if node_id.startswith("Method:"):
-        if len(parts) < 3:
-            return None
-        return ".".join(parts[:-2])
-
-    # Class and Function nodes are "module.ClassName" or "module.func" — strip last part
-    stripped = parts[:-1]
-    # Guard against leading-dot edge case where stripped is empty
-    if not stripped or all(p == "" for p in stripped):
-        return None
-    return ".".join(stripped)
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # Public API: resolve_import (used by testgen pipeline)
 # ═══════════════════════════════════════════════════════════════════════
 

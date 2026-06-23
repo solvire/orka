@@ -4,6 +4,8 @@ import libcst as cst
 import libcst.matchers as m
 import libcst.helpers as helpers
 
+from orka.core.module_resolver import file_to_module
+
 logger = logging.getLogger("Cascade")
 
 class ImportCascadeTransformer(cst.CSTTransformer):
@@ -62,21 +64,13 @@ class ImportCascadeTransformer(cst.CSTTransformer):
             
         return updated_node
 
-def path_to_module(file_path: str, base_dir: str) -> str:
-    """Converts absolute path to Python module by stripping the base directory."""
-    # Strip the base directory to get the relative path
-    rel_path = os.path.relpath(file_path, base_dir)
-    # Strip the extension and replace slashes with dots
-    clean_path = os.path.splitext(rel_path)[0]
-    return clean_path.replace(os.sep, ".").replace("/", ".")
-
 def cascade_import_updates(graph_db, target_class: str, old_file_path: str, new_file_path: str, base_dir: str) -> int:
     """
     Queries OrkaGraphDB for all files relying on the target class, 
     and surgically updates their import statements.
     """
-    old_module = path_to_module(old_file_path, base_dir)
-    new_module = path_to_module(new_file_path, base_dir)
+    old_module = file_to_module(old_file_path, base_dir)
+    new_module = file_to_module(new_file_path, base_dir)
     
     files_to_update = set()
     
