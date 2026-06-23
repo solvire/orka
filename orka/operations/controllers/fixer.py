@@ -84,7 +84,26 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
             "fatal_error": f"LLM fixer failed: {e}",
         }
 
-    # ── 3. Validate the fixed snippet ─────────────────────────────────
+    # ── 3. Log fixer pair for training data ───────────────────────────
+    try:
+        from orka.core.training_logger import log_fixer_pair
+        log_fixer_pair(
+            failing_draft=snippet,
+            validation_error=validation_output,
+            fixed_draft=fixed_snippet,
+            fixer_prompt=fixer_prompt,
+            operation=operation_type,
+            method=state["target_node_id"],
+            file=state.get("source_file", ""),
+            provider=provider,
+            model=getattr(llm_client, "model_name", ""),
+            iteration=state["iteration_count"] + 1,
+            dry_run=state.get("dry_run", False),
+        )
+    except Exception:
+        pass  # training logging is best-effort, never blocks the pipeline
+
+    # ── 4. Validate the fixed snippet ─────────────────────────────────
     result = validate_code_snippet(fixed_snippet, label=state["target_node_id"])
     if not result:
         logger.warning(

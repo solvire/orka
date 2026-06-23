@@ -239,6 +239,8 @@ class Settings:
     AUTO_SCAN_AFTER_MUTATION: bool = _bool_env("ORKA_AUTO_SCAN", True)
     DRY_RUN: bool = _bool_env("ORKA_DRY_RUN", False)
     VERBOSE: bool = _bool_env("ORKA_VERBOSE", False)
+    LOG_TRAINING: bool = _bool_env("ORKA_LOG_TRAINING", False)
+    TRAINING_DIR: str = os.getenv("ORKA_TRAINING_DIR", ".orka/training")
 
     # ================================================================
     # Derived helpers

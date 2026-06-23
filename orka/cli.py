@@ -331,6 +331,24 @@ def refactor(
     except Exception:
         pass  # feedback is best-effort, never blocks the pipeline
 
+    # ── Log training pair on success ──────────────────────────────────
+    if result.get("is_valid", False):
+        try:
+            from orka.core.training_logger import log_generation_pair
+            log_generation_pair(
+                instruction=result.get("compiled_prompt", ""),
+                output=result.get("draft_snippet", ""),
+                operation="refactor",
+                method=method,
+                file=file,
+                provider=provider,
+                model=getattr(settings, "smart_model", ""),
+                iterations=result.get("iteration_count", 0),
+                dry_run=dry_run,
+            )
+        except Exception:
+            pass  # training logging is best-effort
+
     if result.get("is_valid", False):
         if use_json:
             _emit_json({
@@ -540,6 +558,24 @@ def testgen(
             )
         except Exception:
             pass  # feedback is best-effort
+
+        # ── Log training pair on success ──────────────────────────────
+        if result.get("is_valid", False):
+            try:
+                from orka.core.training_logger import log_generation_pair
+                log_generation_pair(
+                    instruction=result.get("compiled_prompt", ""),
+                    output=result.get("draft_snippet", ""),
+                    operation="test",
+                    method=method,
+                    file=file,
+                    provider=provider,
+                    model=getattr(settings, "smart_model", ""),
+                    iterations=result.get("iteration_count", 0),
+                    dry_run=dry_run,
+                )
+            except Exception:
+                pass  # training logging is best-effort
 
     if count > 1 and not output:
         # No output path — concatenate all generated tests to stdout
@@ -930,6 +966,88 @@ def feedback(
                 f"{'✓' if entry['success'] else '✗'} "
                 f"{entry.get('note', '')}"
             )
+
+
+# ---------------------------------------------------------------------------
+# training command — view/export training data for fine-tuning
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def training(
+    json_output: bool = typer.Option(False, "--json", help="Output structured JSON"),
+    data_type: str = typer.Option("all", "--type", "-t", help="generations, fixes, or all"),
+    export: Optional[str] = typer.Option(None, "--export", "-e", help="Export to file path"),
+    export_format: str = typer.Option("jsonl", "--format", "-f", help="Export format: jsonl or json"),
+) -> None:
+    """View or export training data collected from surgery runs.
+
+    Training data is collected when ORKA_LOG_TRAINING=true in .env. It
+    captures prompt->completion pairs for fine-tuning:
+
+    - **Generations**: compiled prompt -> final successful draft
+    - **Fixes**: failing code + error -> fixed code
+
+    Data is stored locally in .orka/training/ (never transmitted).
+
+    Examples::
+
+        orka training                              # view summary
+        orka training --type generations           # view only generation pairs
+        orka training --export dataset.jsonl       # export all as JSONL
+        orka training --export dataset.json --format json  # export as JSON array
+    """
+    from orka.core.training_logger import (
+        load_training_data,
+        summarize_training_data,
+        export_dataset,
+    )
+
+    if not settings.LOG_TRAINING:
+        console.print(
+            "[yellow]Training logging is disabled. Set ORKA_LOG_TRAINING=true in .env to enable.[/yellow]"
+        )
+        return
+
+    if export:
+        count = export_dataset(export, data_type=data_type, format=export_format)
+        console.print(f"[bold green]Exported {count} records to {export}[/bold green]")
+        return
+
+    records = load_training_data(data_type=data_type)
+    if not records:
+        console.print("[dim]No training data collected yet.[/dim]")
+        return
+
+    summary = summarize_training_data(records)
+
+    if json_output:
+        _emit_json({"summary": summary, "count": len(records)})
+        return
+
+    console.print(Panel.fit("[bold cyan]Orka Training Data[/bold cyan]", border_style="cyan"))
+    console.print()
+    console.print(f"[bold]Total records:[/bold] {summary['total']}")
+    console.print(f"[bold]Generations:[/bold] {summary['generations']}")
+    console.print(f"[bold]Fixes:[/bold] {summary['fixes']}")
+    console.print(f"[bold]Avg output chars:[/bold] {summary['avg_output_chars']}")
+    console.print()
+
+    if summary["by_operation"]:
+        console.print("[bold]By operation:[/bold]")
+        for op, count in summary["by_operation"].items():
+            console.print(f"  {op}: {count}")
+        console.print()
+
+    if summary["by_provider"]:
+        console.print("[bold]By provider:[/bold]")
+        for prov, count in summary["by_provider"].items():
+            console.print(f"  {prov}: {count}")
+        console.print()
+
+    console.print(
+        "[dim]Export with: orka training --export dataset.jsonl[/dim]"
+    )
 
 
 # ---------------------------------------------------------------------------
