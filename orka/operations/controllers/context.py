@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from typing import Any
 
 import libcst as cst
 
 from orka.clients import OrkaLangChainClient
 from orka.config import settings
+from orka.core.locator import extract_docstring_regex, get_signature
 from orka.operations.graph_helpers import (
     extract_dependency_signatures,
     get_graph_db,
@@ -39,8 +39,10 @@ def _collect_parameter_types(
 ) -> dict[str, str]:
     """Extract parameter type names from a function and look up their definitions.
 
-    Uses LibCST to find the function signature, then for each typed parameter
-    searches the graph DB for a matching class node and reads its source code.
+    Uses :func:`orka.core.locator.get_signature` for parameter extraction (the
+    single source of truth), then walks each annotation's CST to collect type
+    names.  For each typed parameter, searches the graph DB for a matching
+    class node and reads its source code.
 
     Returns ``{type_name: source_code}`` — a map of type names to their
     class/type definitions.  Unresolved types are omitted from the map.
@@ -53,41 +55,28 @@ def _collect_parameter_types(
     except Exception:
         return {}
 
-    class _ParamTypeCollector(cst.CSTVisitor):
-        def __init__(self) -> None:
-            self.type_names: set[str] = set()
+    # The snippet is a single function definition (from extract_method_source);
+    # grab the first top-level FunctionDef, decorators included.
+    func_node = next((s for s in tree.body if isinstance(s, cst.FunctionDef)), None)
+    if func_node is None:
+        return {}
 
-        def visit_FunctionDef(self, node: cst.FunctionDef) -> bool:
-            for param in node.params.params:
-                if hasattr(param, "annotation") and param.annotation:
-                    ann = param.annotation.annotation
-                    # Simple name like ``int`` or ``OrkaGraphDB``
-                    if isinstance(ann, cst.Name):
-                        self.type_names.add(ann.value)
-                    # Attribute like ``Optional[OrkaGraphDB]`` — extract the inner
-                    elif isinstance(ann, cst.Subscript):
-                        self._extract_from_subscript(ann)
-            return False  # Don't descend into nested functions
-
-        def _extract_from_subscript(self, node: cst.Subscript) -> None:
-            """Extract type names from e.g. ``Optional[OrkaGraphDB]`` or ``list[int]``."""
-            if isinstance(node.value, cst.Name):
-                self.type_names.add(node.value.value)  # Optional, list, dict
-            if node.slice:
-                for slice_elem in node.slice:
-                    if isinstance(slice_elem, cst.Index) and isinstance(slice_elem.value, cst.Name):
-                        self.type_names.add(slice_elem.value.value)
-                    elif isinstance(slice_elem, cst.Index) and isinstance(slice_elem.value, cst.Subscript):
-                        self._extract_from_subscript(slice_elem.value)
-
-    collector = _ParamTypeCollector()
-    tree.visit(collector)
+    # Param extraction is delegated to the locator (get_signature).  Each
+    # annotated param is rendered as ``"name: annotation"``.
+    sig = get_signature(func_node)
+    type_names: set[str] = set()
+    for param in sig.params:
+        if ": " not in param:
+            continue
+        annotation_src = param.split(": ", 1)[1]
+        try:
+            ann_node = cst.parse_expression(annotation_src)
+        except Exception:
+            continue
+        _collect_type_names(ann_node, type_names)
 
     # Filter to only names that look like types (capitalised) and skip builtins
-    candidate_names = {
-        n for n in collector.type_names
-        if n[0].isupper() if n
-    }
+    candidate_names = {n for n in type_names if n and n[0].isupper()}
 
     result: dict[str, str] = {}
     for type_name in candidate_names:
@@ -102,6 +91,28 @@ def _collect_parameter_types(
                         break
 
     return result
+
+
+def _collect_type_names(node: cst.BaseExpression, names: set[str]) -> None:
+    """Recursively collect identifier names from a type-annotation CST node.
+
+    Handles plain names (``int``) and subscripts (``Optional[OrkaGraphDB]``,
+    ``list[int]``, ``Dict[str, List[Foo]]``).  Other shapes (e.g. attributes
+    like ``models.Model``) are intentionally left untouched, matching the
+    historical ``_ParamTypeCollector`` behaviour.
+    """
+    if isinstance(node, cst.Name):
+        names.add(node.value)
+    elif isinstance(node, cst.Subscript):
+        if isinstance(node.value, cst.Name):
+            names.add(node.value.value)
+        if node.slice:
+            for slice_elem in node.slice:
+                if isinstance(slice_elem, cst.Index):
+                    if isinstance(slice_elem.value, cst.Name):
+                        names.add(slice_elem.value.value)
+                    elif isinstance(slice_elem.value, cst.Subscript):
+                        _collect_type_names(slice_elem.value, names)
 
 
 def _read_class_source(file_path: str, class_name: str) -> str | None:
@@ -121,21 +132,6 @@ def _read_class_source(file_path: str, class_name: str) -> str | None:
 
 
 # ── Internal helpers ──────────────────────────────────────────────────
-
-
-def _extract_docblock(source: str) -> str:
-    """Extract the first triple-quoted docstring from *source*.
-
-    Uses a simple regex — no LibCST needed at this stage.
-    Returns the docblock body (stripped) or an empty string.
-    """
-    match = re.search(r'"""(.*?)"""', source, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    match = re.search(r"'''(.*?)'''", source, re.DOTALL)
-    if match:
-        return match.group(1).strip()
-    return ""
 
 
 def _generate_smart_query(
@@ -393,7 +389,7 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
         class_context = extracted or ""
 
     # ── 3. Build semantic query (HyDE → fallback) ──────────────────────
-    docblock = _extract_docblock(existing_code)
+    docblock = extract_docstring_regex(existing_code) or ""
 
     query_text = _generate_smart_query(
         method_name, prompt_template_name, docblock, requirements, existing_code,

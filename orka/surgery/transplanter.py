@@ -1,8 +1,12 @@
 import os
 import logging
 import libcst as cst
-import libcst.matchers as m
+from typing import List, Set
 
+
+from collections import defaultdict
+
+from orka.core.locator import find_class
 from orka.surgery.analyzer import analyze_code_block
 from orka.core.module_resolver import file_to_module
 from orka.core.import_injector import harvest_and_dedupe
@@ -82,12 +86,12 @@ def transplant_class(source_file: str, target_class: str, dest_file: str, base_d
         return False
 
     # 1. First pass: Find the class to analyze its dependencies
-    class_finder = m.findall(source_tree, m.ClassDef(name=m.Name(target_class)))
-    if not class_finder:
+    found_class = find_class(source_tree, target_class)
+    if found_class is None:
         logger.error(f"Class '{target_class}' not found in {source_file}.")
         return False
 
-    class_source = cst.Module(body=[class_finder[0]]).code
+    class_source = cst.Module(body=[found_class]).code
     required_deps = analyze_code_block(class_source)
 
     # 2. Harvest imports (deduped/merged) via import_injector
