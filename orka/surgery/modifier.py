@@ -17,8 +17,8 @@ import textwrap
 from typing import Optional
 
 import libcst as cst
-from orka.core.locator import extract_docstring
 from orka.core.snippet_utils import sanitize_llm_output
+from orka.surgery.trivia import preserve_docstring
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -140,19 +140,8 @@ class MethodBodyReplacer(cst.CSTTransformer):
         updated_node: cst.FunctionDef,
     ) -> cst.FunctionDef:
         """Apply body replacement, preserving the original docstring if missing in new body."""
-        original_doc = extract_docstring(original_node.body)
-        new_doc = extract_docstring(self.new_body_node)
-
-        if original_doc is not None and new_doc is None:
-            # Prepend the original docstring statement node verbatim to
-            # preserve exact formatting (quotes, prefixes, indentation).
-            original_docstring_node = original_node.body.body[0]
-            preserved_body = self.new_body_node.with_changes(
-                body=(original_docstring_node,) + self.new_body_node.body
-            )
-            return updated_node.with_changes(body=preserved_body)
-
-        return updated_node.with_changes(body=self.new_body_node)
+        preserved_body = preserve_docstring(original_node.body, self.new_body_node)
+        return updated_node.with_changes(body=preserved_body)
 
 
 # ═══════════════════════════════════════════════════════════════════════
