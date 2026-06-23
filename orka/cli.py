@@ -54,21 +54,15 @@ _SCAN_LOCK_FILE = os.path.join(workspace_dir, ".orka_scan.lock")
 
 
 def _get_version() -> str:
-    """Return orka version, preferring git tag (with dirty indicator) over package metadata."""
-    try:
-        result = subprocess.run(
-            ["git", "describe", "--tags", "--always", "--dirty"],
-            capture_output=True, text=True, timeout=3,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except Exception:
-        pass
+    """Return orka's package version from pyproject.toml metadata."""
     try:
         from importlib.metadata import version as pkg_version
-        return pkg_version("orka-tools")
+        v = pkg_version("orka-tools")
+        if v and v != "0.0.0":
+            return v
     except Exception:
-        return "unknown"
+        pass
+    return "0.0.0"
 
 
 @app.callback(invoke_without_command=True)
