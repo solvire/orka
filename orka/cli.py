@@ -47,10 +47,42 @@ import yaml
 # Globals
 # ---------------------------------------------------------------------------
 logger = logging.getLogger("orka.cli")
-app = typer.Typer(help="Orka: AI-Powered Semantic Code Surgery", no_args_is_help=True)
+app = typer.Typer(help="Orka: AI-Powered Semantic Code Surgery")
 console = Console()
 workspace_dir = str(settings.PROJECT_ROOT)
 _SCAN_LOCK_FILE = os.path.join(workspace_dir, ".orka_scan.lock")
+
+
+def _get_version() -> str:
+    """Return orka version, preferring git tag (with dirty indicator) over package metadata."""
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--always", "--dirty"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+    try:
+        from importlib.metadata import version as pkg_version
+        return pkg_version("orka-tools")
+    except Exception:
+        return "unknown"
+
+
+@app.callback(invoke_without_command=True)
+def main(
+    ctx: typer.Context,
+    version: bool = typer.Option(False, "--version", "-v", help="Show version and exit"),
+) -> None:
+    """Orka: AI-Powered Semantic Code Surgery."""
+    if version:
+        typer.echo(f"orka {_get_version()}")
+        raise typer.Exit()
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
 
 
 # ---------------------------------------------------------------------------
