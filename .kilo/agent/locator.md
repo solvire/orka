@@ -58,7 +58,7 @@ For each consolidation step:
 2. **Write tests** for the new function (mirror existing test coverage).
 3. **Migrate callers** one file at a time -- update imports, run tests after each.
 4. **Delete** the old duplicate only after all callers are migrated and tests pass.
-5. **Run the full suite**: `.venv/bin/python -m pytest orka/tests/ -v`
+5. **Run the full suite**: `env/bin/python -m pytest orka/tests/ -v`
 
 ## 5. Architectural Constraints (enforced -- see AGENTS.md)
 
@@ -78,12 +78,12 @@ Always check this property, never define `visit_AsyncFunctionDef`.
 ## 7. Environment
 
 ```bash
-source .venv/bin/activate
+source env/bin/activate
 ```
 
-Tests: `.venv/bin/python -m pytest orka/tests/ -v`
-Lint: `.venv/bin/python -m ruff check orka/core/ orka/surgery/`
-Compile check: `.venv/bin/python -m py_compile <file>`
+Tests: `env/bin/python -m pytest orka/tests/ -v`
+Lint: `env/bin/python -m ruff check orka/core/ orka/surgery/`
+Compile check: `env/bin/python -m py_compile <file>`
 
 ## 8. Git Safety
 

@@ -6,7 +6,7 @@
 # Design: defensive + verbose. Never exit early — log every step's outcome so
 # the agent (and the user) can see exactly what bootstrapped and what didn't.
 #
-# Adapted from the kidecon setup-script for orka (venv is .venv/, not env/;
+# Adapted from the kidecon setup-script for orka (venv is env/ — project convention).
 # orka is a CLI tool, no Django server to health-check).
 
 echo "[setup] ============================================"
@@ -31,15 +31,15 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$WORKTREE_PATH" = "$REPO_PATH" ]; then
   echo "[setup] OK  WORKTREE_PATH == REPO_PATH (local session); venv already in place, skipping symlink"
-elif [ -d "$REPO_PATH/.venv" ]; then
-  if [ ! -e "$WORKTREE_PATH/.venv" ] && [ ! -L "$WORKTREE_PATH/.venv" ]; then
-    ln -s "$REPO_PATH/.venv" "$WORKTREE_PATH/.venv" && echo "[setup] OK  venv symlinked -> $REPO_PATH/.venv" \
+elif [ -d "$REPO_PATH/env" ]; then
+  if [ ! -e "$WORKTREE_PATH/env" ] && [ ! -L "$WORKTREE_PATH/env" ]; then
+    ln -s "$REPO_PATH/env" "$WORKTREE_PATH/env" && echo "[setup] OK  venv symlinked -> $REPO_PATH/env" \
                                                || echo "[setup] WARN  venv symlink failed"
   else
-    echo "[setup] OK  venv already present at $WORKTREE_PATH/.venv"
+    echo "[setup] OK  venv already present at $WORKTREE_PATH/env"
   fi
 else
-  echo "[setup] WARN  no venv at $REPO_PATH/.venv — agent must create one"
+  echo "[setup] WARN  no venv at $REPO_PATH/env — agent must create one"
 fi
 
 # ---------------------------------------------------------------------------
@@ -96,13 +96,13 @@ fi
 echo "[setup] verifying orka boots (best-effort, non-blocking)..."
 cd "$WORKTREE_PATH" || { echo "[setup] WARN  cannot cd to worktree"; exit 0; }
 
-# Source venv if available; fall back to REPO_PATH/.venv directly.
-if [ -f .venv/bin/activate ]; then
+# Source venv if available; fall back to REPO_PATH/env directly.
+if [ -f env/bin/activate ]; then
   # shellcheck disable=SC1091
-  source .venv/bin/activate 2>/dev/null || true
-elif [ -f "$REPO_PATH/.venv/bin/activate" ]; then
+  source env/bin/activate 2>/dev/null || true
+elif [ -f "$REPO_PATH/env/bin/activate" ]; then
   # shellcheck disable=SC1091
-  source "$REPO_PATH/.venv/bin/activate" 2>/dev/null || true
+  source "$REPO_PATH/env/bin/activate" 2>/dev/null || true
 fi
 
 python -c "import orka; print('[setup] orka importable')" 2>&1 | tail -1 || echo "[setup] WARN  orka import failed — agent will resolve."

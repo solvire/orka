@@ -52,11 +52,11 @@ them as Orka feedback.
 ## 4. Environment
 
 ```bash
-source .venv/bin/activate
+source env/bin/activate
 ```
 
-Orka lives inside the venv at `.venv/`. Always activate before invoking.
-Tests run via `.venv/bin/python -m pytest orka/tests/`.
+Orka lives inside the venv at `env/`. Always activate before invoking.
+Tests run via `env/bin/python -m pytest orka/tests/`.
 
 ## 5. Discovery Protocol
 
@@ -85,7 +85,7 @@ orka inspect --id "Method:<path>.<class>.<method>"  # method relationships
 1. `orka inspect --id "File:<path>"` -- see the file's dependencies
 2. `orka inspect --id "Method:<path>.<class>.<method>"` -- see the method's relationships
 3. `orka refactor ...` -- execute the surgery with full context
-4. Verify with tests: `.venv/bin/python -m pytest orka/tests/ -v`
+4. Verify with tests: `env/bin/python -m pytest orka/tests/ -v`
 
 ## 7. Scaffolding Brand-New Files
 

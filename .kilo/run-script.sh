@@ -11,12 +11,12 @@ set -euo pipefail
 cd "$WORKTREE_PATH"
 
 # Source venv if available.
-if [ -f .venv/bin/activate ]; then
+if [ -f env/bin/activate ]; then
   # shellcheck disable=SC1091
-  source .venv/bin/activate 2>/dev/null || true
-elif [ -f "$REPO_PATH/.venv/bin/activate" ]; then
+  source env/bin/activate 2>/dev/null || true
+elif [ -f "$REPO_PATH/env/bin/activate" ]; then
   # shellcheck disable=SC1091
-  source "$REPO_PATH/.venv/bin/activate" 2>/dev/null || true
+  source "$REPO_PATH/env/bin/activate" 2>/dev/null || true
 fi
 
 echo "[run] starting pytest watcher for orka"

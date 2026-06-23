@@ -38,5 +38,5 @@ When modifying this codebase, strictly adhere to the following rules:
 - `orka doctor`: Check configuration health.
 
 ## Running Tests
-Run `.venv/bin/python -m pytest orka/tests/` from the project root.
+Run `env/bin/python -m pytest orka/tests/` from the project root.
 Baseline: 419 passed, 1 pre-existing failure (`test_compile_real_test_template`).
