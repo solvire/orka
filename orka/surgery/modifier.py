@@ -17,6 +17,7 @@ import textwrap
 from typing import Optional
 
 import libcst as cst
+from orka.core.locator import extract_docstring
 from orka.core.snippet_utils import sanitize_llm_output
 
 
@@ -100,23 +101,6 @@ class MethodBodyReplacer(cst.CSTTransformer):
         self.new_body_node = parse_snippet_to_cst_body(new_body_source)
         self.modification_successful = False
 
-    @staticmethod
-    def _extract_docstring_node(body_node: cst.IndentedBlock) -> Optional[cst.BaseStatement]:
-        """Return the first statement if it is a docstring (string literal), else None."""
-        if not body_node.body:
-            return None
-        first_stmt = body_node.body[0]
-        # Check if it's a simple statement containing an expression that is a string
-        if isinstance(first_stmt, cst.SimpleStatementLine):
-            # A docstring is typically a single Expr statement with a string constant
-            if len(first_stmt.body) == 1:
-                expr = first_stmt.body[0]
-                if isinstance(expr, cst.Expr):
-                    val = expr.value
-                    if isinstance(val, (cst.SimpleString, cst.ConcatenatedString)):
-                        return first_stmt
-        return None
-
     # ── Class entry/exit ────────────────────────────────────────────
 
     def visit_ClassDef(self, node: cst.ClassDef) -> bool | None:
@@ -156,13 +140,15 @@ class MethodBodyReplacer(cst.CSTTransformer):
         updated_node: cst.FunctionDef,
     ) -> cst.FunctionDef:
         """Apply body replacement, preserving the original docstring if missing in new body."""
-        original_docstring = self._extract_docstring_node(original_node.body)
-        new_docstring = self._extract_docstring_node(self.new_body_node)
+        original_doc = extract_docstring(original_node.body)
+        new_doc = extract_docstring(self.new_body_node)
 
-        if original_docstring is not None and new_docstring is None:
-            # Prepend the original docstring to the new body
+        if original_doc is not None and new_doc is None:
+            # Prepend the original docstring statement node verbatim to
+            # preserve exact formatting (quotes, prefixes, indentation).
+            original_docstring_node = original_node.body.body[0]
             preserved_body = self.new_body_node.with_changes(
-                body=(original_docstring,) + self.new_body_node.body
+                body=(original_docstring_node,) + self.new_body_node.body
             )
             return updated_node.with_changes(body=preserved_body)
 
