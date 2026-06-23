@@ -10,7 +10,6 @@ Functions
 ---------
 - :func:`get_graph_db` — lazy singleton for ``OrkaGraphDB``
 - :func:`find_target_node` — locate a method/function node in the graph
-- :func:`module_from_node_id` — extract dotted module path from a node ID
 - :func:`resolve_target_module` — dotted module for the target
 - :func:`resolve_one_dependency` — resolve a single callee name
 - :func:`build_dependency_map` — all callable nodes in scope
@@ -27,6 +26,7 @@ import os
 from typing import Any
 
 from orka.config import settings
+from orka.core.module_resolver import node_id_to_module, file_to_module
 
 logger = logging.getLogger(__name__)
 
@@ -121,23 +121,6 @@ def find_target_node(
     return None
 
 
-def module_from_node_id(node_id: str) -> str | None:
-    """Extract dotted module path from a graph node ID.
-
-    Examples
-    --------
-    ``"Function:orka.operations.helpers.load_template"`` → ``"orka.operations.helpers"``
-    ``"Method:orka.core.compiler.PromptCompiler.compile"`` → ``"orka.core.compiler"``
-    """
-    if ":" not in node_id:
-        return None
-    without_type = node_id.split(":", 1)[1]
-    parts = without_type.split(".")
-    if len(parts) < 2:
-        return None
-    return ".".join(parts[:-1])
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # Module resolution
 # ═══════════════════════════════════════════════════════════════════════
@@ -162,18 +145,12 @@ def resolve_target_module(
     if graph_db is not None:
         target_node = find_target_node(graph_db, source_file, method_name, class_name)
         if target_node:
-            module_path = module_from_node_id(target_node)
+            module_path = node_id_to_module(target_node)
             if module_path:
                 return module_path
 
     # Strategy 2: file-path heuristic
-    path = os.path.normpath(source_file)
-    ws = os.path.normpath(str(settings.PROJECT_ROOT))
-    if path.startswith(ws):
-        path = path[len(ws) :].lstrip("/").lstrip("\\")
-    if path.endswith(".py"):
-        path = path[:-3]
-    module_path = path.replace("/", ".").replace("\\", ".").lstrip(".")
+    module_path = file_to_module(source_file, str(settings.PROJECT_ROOT))
     return module_path if module_path else None
 
 
@@ -197,7 +174,7 @@ def resolve_one_dependency(
     for node, attrs in graph_db.graph.nodes(data=True):
         if attrs.get("name") != name:
             continue
-        node_module = module_from_node_id(node)
+        node_module = node_id_to_module(node)
         if node_module and node_module == source_module:
             node_type = attrs.get("node_type", "unknown")
             return {
@@ -213,7 +190,7 @@ def resolve_one_dependency(
     for node, attrs in graph_db.graph.nodes(data=True):
         if attrs.get("name") != name:
             continue
-        node_module = module_from_node_id(node)
+        node_module = node_id_to_module(node)
         if node_module:
             node_type = attrs.get("node_type", "unknown")
             return {
@@ -290,7 +267,7 @@ def build_dependency_map(
     for node, attrs in graph_db.graph.nodes(data=True):
         if attrs.get("node_type") not in ("function", "method", "class"):
             continue
-        node_module = module_from_node_id(node)
+        node_module = node_id_to_module(node)
         if node_module and node_module in target_modules:
             name = attrs["name"]
             if name not in deps:
@@ -344,7 +321,7 @@ def build_caller_constraints(
     callers: list[dict[str, str]] = []
     for caller_node in graph_db.graph.predecessors(target_node):
         caller_attrs = graph_db.graph.nodes[caller_node]
-        caller_module = module_from_node_id(caller_node)
+        caller_module = node_id_to_module(caller_node)
         caller_name = caller_attrs.get("name", "")
         if caller_module and caller_name:
             callers.append({

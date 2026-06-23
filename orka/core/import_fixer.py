@@ -15,6 +15,7 @@ import ast
 import logging
 import os
 from typing import Optional
+from orka.core.module_resolver import node_id_to_module, file_to_module
 
 import libcst as cst
 from libcst.codemod import CodemodContext
@@ -154,7 +155,7 @@ def _lookup_in_graph(
         if attrs.get("name") != name:
             continue
 
-        module_path = _module_from_node_id(node_id)
+        module_path = node_id_to_module(node_id)
         if module_path:
             return module_path, name
 
@@ -232,52 +233,6 @@ def _inject_imports(
     except Exception as e:
         logger.debug("Failed to inject imports via AddImportsVisitor: %s", e)
         return source
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Shared helpers
-# ═══════════════════════════════════════════════════════════════════════
-
-
-def _module_from_node_id(node_id: str) -> Optional[str]:
-    """Extract the dotted module path from a graph node ID.
-
-    Handles three node types:
-
-    - ``Class:myapp.models.User`` → ``"myapp.models"``
-    - ``Function:app.helpers.calculate_discount`` → ``"app.helpers"``
-    - ``Method:orka.core.compiler.PromptCompiler.compile``
-      → ``"orka.core.compiler"`` (strips both class and method name)
-
-    Returns ``None`` when extraction is impossible (no colon, empty path,
-    single-part path, etc.).
-    """
-    if ":" not in node_id:
-        return None
-    without_type = node_id.split(":", 1)[1]
-
-    # Guard: empty after type prefix
-    if not without_type:
-        return None
-
-    parts = without_type.split(".")
-
-    # A valid module path has at least 2 parts: module.obj
-    if len(parts) < 2:
-        return None
-
-    # Method nodes are "module.ClassName.method" — strip last 2 parts
-    if node_id.startswith("Method:"):
-        if len(parts) < 3:
-            return None
-        return ".".join(parts[:-2])
-
-    # Class and Function nodes are "module.ClassName" or "module.func" — strip last part
-    stripped = parts[:-1]
-    # Guard against leading-dot edge case where stripped is empty
-    if not stripped or all(p == "" for p in stripped):
-        return None
-    return ".".join(stripped)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -368,7 +323,7 @@ def _from_graph(
             if not norm_file.endswith(norm_attr) and not norm_attr.endswith(norm_file):
                 continue
 
-        module_path = _module_from_node_id(node_id)
+        module_path = node_id_to_module(node_id)
         if module_path:
             return f"from {module_path} import {target_name}\n"
 
@@ -386,41 +341,8 @@ def _from_file_path(
     method_name: Optional[str] = None,
     workspace_dir: str = "",
 ) -> Optional[str]:
-    """Convert a file path to a dotted module path.
-
-    Handles absolute paths, relative paths, ``__init__.py`` files, and
-    files without a workspace prefix.
-
-    Examples
-    --------
-    ``/home/project/src/payments/processor.py`` →
-    ``from src.payments.processor import OrderProcessor``
-
-    ``/home/project/src/payments/__init__.py`` →
-    ``from src.payments import OrderProcessor``
-    """
-    # Normalise
-    path = os.path.normpath(file_path)
-    if not path:
-        return None
-
-    # Strip workspace prefix if present
-    if workspace_dir:
-        ws = os.path.normpath(workspace_dir)
-        if path.startswith(ws):
-            path = path[len(ws):].lstrip("/").lstrip("\\")
-
-    # Remove .py extension
-    if path.endswith(".py"):
-        path = path[:-3]
-    # Handle __init__.py → parent directory
-    if path.endswith("/__init__") or path.endswith("\\__init__"):
-        path = os.path.dirname(path)
-
-    # Convert slashes to dots
-    module_path = path.replace("/", ".").replace("\\", ".")
-    # Strip leading dot if any
-    module_path = module_path.lstrip(".")
+    """Convert a file path to a dotted module path."""
+    module_path = file_to_module(file_path, workspace_dir)
 
     import_name = class_name or method_name
     if not import_name or not module_path:
