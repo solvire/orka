@@ -5,10 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from orka.config import settings
 from orka.core.validator import (
     ValidationResult,
     validate_code_snippet,
     validate_file,
+    validate_four_gates,
     _indent_body,
 )
 
@@ -243,3 +245,221 @@ class TestValidationResult:
         assert "FAILED" in repr(r)
         assert "line 5" in repr(r)
         assert "invalid syntax" in repr(r)
+
+
+# ---------------------------------------------------------------------------
+# validate_four_gates
+# ---------------------------------------------------------------------------
+
+
+class TestValidateFourGates:
+    """Tests for the unified 4-gate validation pipeline.
+
+    Return contract: ``(passed, output_message, assembled_content)`` where
+    *assembled_content* is ``None`` whenever assembly (Gate 2) never succeeds.
+    """
+
+    def test_empty_snippet(self):
+        """An empty snippet short-circuits before any gate runs."""
+        passed, output, assembled = validate_four_gates(
+            snippet="",
+            source_file="dummy.py",
+            target_file="dummy.py",
+            target_node_id="x",
+        )
+        assert passed is False
+        assert "No draft" in output
+        assert assembled is None
+
+    def test_gate1_invalid_snippet_syntax(self, tmp_path):
+        """Gate 1: a syntactically invalid snippet fails immediately."""
+        passed, output, assembled = validate_four_gates(
+            snippet="if True",
+            source_file=str(tmp_path / "src.py"),
+            target_file=str(tmp_path / "src.py"),
+            target_node_id="add",
+            operation_type="refactor",
+            method_name="add",
+        )
+        assert passed is False
+        assert "Syntax error" in output
+        assert assembled is None
+
+    def test_gate2_target_method_not_found(self, tmp_path):
+        """Gate 2: a valid snippet whose target method is missing fails assembly."""
+        src = tmp_path / "calc.py"
+        src.write_text("def add(a, b):\n    return a + b\n")
+        passed, output, assembled = validate_four_gates(
+            snippet="return a * b",
+            source_file=str(src),
+            target_file=str(src),
+            target_node_id="nonexistent",
+            operation_type="refactor",
+            method_name="nonexistent",
+        )
+        assert passed is False
+        assert "Failed to assemble" in output
+        assert assembled is None
+
+    def test_gate3_assembled_file_syntax_error(self, tmp_path):
+        """Gate 3: a snippet whose assembled form is a parse error.
+
+        The snippet ``"    x = 1"`` has leading indentation, so it parses
+        fine as a function body (Gate 1 re-indents it inside the wrapper)
+        but is an ``IndentationError`` at module level once prepended with
+        the test import (Gate 3).  Note: ``ast.parse`` is lenient about
+        ``return``/``break`` outside functions, so an indented statement is
+        used to produce a genuine parser-level error.
+        """
+        passed, output, assembled = validate_four_gates(
+            snippet="    x = 1",
+            source_file="calc.py",
+            target_file=str(tmp_path / "test_calc.py"),
+            target_node_id="Calculator",
+            operation_type="test",
+            class_name="Calculator",
+        )
+        assert passed is False
+        assert "Syntax error in assembled file" in output
+        assert assembled is not None
+        assert "x = 1" in assembled
+
+    def test_dry_run_skips_pytest(self, tmp_path):
+        """Dry-run stops after Gate 3 — no disk write, no pytest."""
+        src = tmp_path / "calc.py"
+        src.write_text("def add(a, b):\n    return 0\n")
+        passed, output, assembled = validate_four_gates(
+            snippet="return a + b",
+            source_file=str(src),
+            target_file=str(src),
+            target_node_id="add",
+            operation_type="refactor",
+            method_name="add",
+            dry_run=True,
+        )
+        assert passed is True
+        assert "Dry" in output
+        assert assembled is not None
+        assert "return a + b" in assembled
+        # The file must NOT have been written — original body is intact.
+        assert "return 0" in src.read_text()
+
+    def test_full_pass_refactor(self, tmp_path):
+        """Full refactor pass: snippet patches the method, pytest passes."""
+        src = tmp_path / "calc.py"
+        src.write_text(
+            "def add(a, b):\n"
+            "    return 0\n"
+            "\n"
+            "\n"
+            "def test_add():\n"
+            "    assert add(2, 3) == 5\n"
+        )
+        passed, output, assembled = validate_four_gates(
+            snippet="return a + b",
+            source_file=str(src),
+            target_file=str(src),
+            target_node_id="add",
+            operation_type="refactor",
+            method_name="add",
+        )
+        assert passed is True
+        assert output == ""
+        assert assembled is not None
+        assert "return a + b" in assembled
+
+    def test_full_pass_test(self, tmp_path, monkeypatch):
+        """Full test pass: assembled test file imports the target and passes."""
+        # Point the resolver's workspace at tmp_path so the source file's
+        # module path resolves to a bare, importable name ("calc").
+        monkeypatch.setattr(settings, "PROJECT_ROOT", tmp_path)
+
+        calc = tmp_path / "calc.py"
+        calc.write_text(
+            "class Calculator:\n"
+            "    def add(self, a, b):\n"
+            "        return a + b\n"
+        )
+        snippet = (
+            "def test_calculator_add():\n"
+            "    c = Calculator()\n"
+            "    assert c.add(2, 3) == 5\n"
+        )
+        passed, output, assembled = validate_four_gates(
+            snippet=snippet,
+            source_file=str(calc),
+            target_file=str(tmp_path / "test_calc.py"),
+            target_node_id="Calculator",
+            operation_type="test",
+            class_name="Calculator",
+        )
+        assert passed is True
+        assert output == ""
+        assert assembled is not None
+        assert "from calc import Calculator" in assembled
+        assert "test_calculator_add" in assembled
+
+    def test_gate4_pytest_failure(self, tmp_path):
+        """Gate 4: a refactored method that breaks the test fails pytest."""
+        src = tmp_path / "calc.py"
+        src.write_text(
+            "def add(a, b):\n"
+            "    return a + b\n"
+            "\n"
+            "\n"
+            "def test_add():\n"
+            "    assert add(2, 3) == 5\n"
+        )
+        passed, output, assembled = validate_four_gates(
+            snippet="return a * b",
+            source_file=str(src),
+            target_file=str(src),
+            target_node_id="add",
+            operation_type="refactor",
+            method_name="add",
+        )
+        assert passed is False
+        assert assembled is not None
+        assert "return a * b" in assembled
+        assert output  # non-empty truncated error summary
+        assert "assert" in output
+
+
+# ---------------------------------------------------------------------------
+# Controller thin-wrapper (operations/controllers/validator.py:execute)
+# ---------------------------------------------------------------------------
+
+
+class TestValidatorControllerExecute:
+    """Smoke tests for the thin state-dict wrapper around validate_four_gates."""
+
+    def test_empty_snippet_short_circuits(self):
+        from orka.operations.controllers.validator import execute
+
+        result = execute({"draft_snippet": ""})
+        assert result == {
+            "is_valid": False,
+            "validation_output": "No draft snippet to validate.",
+        }
+        # No draft_file_content key on the short-circuit path.
+        assert "draft_file_content" not in result
+
+    def test_dry_run_refactor_translates_state(self, tmp_path):
+        from orka.operations.controllers.validator import execute
+
+        src = tmp_path / "calc.py"
+        src.write_text("def add(a, b):\n    return 0\n")
+        state = {
+            "draft_snippet": "return a + b",
+            "source_file": str(src),
+            "target_output_file": str(src),
+            "target_node_id": "add",
+            "prompt_template_name": "refactor",
+            "method_name": "add",
+            "dry_run": True,
+        }
+        result = execute(state)
+        assert result["is_valid"] is True
+        assert "Dry" in result["validation_output"]
+        assert "draft_file_content" in result
+        assert "return a + b" in result["draft_file_content"]

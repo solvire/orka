@@ -16,13 +16,13 @@ from typing import Optional
 import yaml
 
 from orka.core.templates import InjectionPoint, PromptTemplate
+from orka.core.validator import extract_error_summary, truncate_error_summary
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "prompts" / "templates"
-_MAX_ERROR_SUMMARY_CHARS = 2000
 
 
 # ── Template loading ───────────────────────────────────────────────────
@@ -61,60 +61,12 @@ def load_template(name: str) -> PromptTemplate:
 
 
 # ── Error truncation ───────────────────────────────────────────────────
-
-
-def extract_error_summary(pytest_output: str) -> str:
-    """Extract the most relevant error block from pytest output.
-
-    Prioritises the ``FAILURES`` section, falling back to the last 40
-    significant lines (skipping ``===`` headers, collection info, etc.).
-    """
-    if "FAILURES" in pytest_output:
-        idx = pytest_output.index("FAILURES")
-        relevant = pytest_output[idx:]
-        if "short test summary" in relevant:
-            relevant = relevant[: relevant.index("short test summary")]
-        return relevant.strip()
-
-    lines = [
-        l
-        for l in pytest_output.strip().splitlines()
-        if not l.startswith("===")
-        and not l.startswith("collected")
-        and not l.startswith("platform")
-        and not l.startswith("rootdir")
-    ]
-    return "\n".join(lines[-40:])
-
-
-def truncate_error_summary(
-    summary: str,
-    max_chars: int = _MAX_ERROR_SUMMARY_CHARS,
-) -> str:
-    """Truncate error summary, keeping the most recent (bottom) portion.
-
-    Uses the same pattern as ``tdd_pipeline.py``: keep the first 1500
-    characters and the last 500, with a truncation marker in between.
-    """
-    if len(summary) <= max_chars:
-        return summary
-
-    head_chars = int(max_chars * 0.75)  # ~1500 of 2000
-    tail_chars = max_chars - head_chars  # ~500
-
-    head = summary[:head_chars]
-    tail = summary[-tail_chars:]
-
-    # Ensure we don't break in the middle of a line
-    last_newline = head.rfind("\n")
-    if last_newline > 0:
-        head = summary[:last_newline]
-
-    first_newline = tail.find("\n")
-    if first_newline > 0:
-        tail = tail[first_newline + 1 :]
-
-    return f"{head}\n... [traceback truncated] ...\n{tail}"
+#
+# ``extract_error_summary`` and ``truncate_error_summary`` were relocated to
+# :mod:`orka.core.validator` — the canonical home for validation utilities —
+# so that ``validate_four_gates`` can use them without an ``operations`` ->
+# ``core`` dependency inversion.  They are re-exported from the import block
+# above for backward compatibility with existing callers.
 
 
 # ── Fixer prompt construction ──────────────────────────────────────────
