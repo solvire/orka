@@ -3,7 +3,10 @@ description: Orka code surgery -- refactor with AST precision, self-hardening fe
 mode: primary
 model: zai/glm-5.2
 permission:
-  edit: ask
+  edit:
+    "orka/**": allow
+    ".kilo/**": allow
+    "*": ask
   bash: allow
   read: allow
   glob: allow
