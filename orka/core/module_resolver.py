@@ -29,6 +29,10 @@ def node_id_to_module(node_id: str) -> Optional[str]:
     if len(parts) < 2:
         return None
 
+    # Guard: any empty part means a malformed node ID (trailing/leading/double dot)
+    if any(p == "" for p in parts):
+        return None
+
     # Method nodes are "module.ClassName.method" — strip last 2 parts
     if node_id.startswith("Method:"):
         if len(parts) < 3:

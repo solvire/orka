@@ -470,13 +470,28 @@ def _assemble_test_file(
     # ── Strip import statements from the LLM snippet ──────────────────
     # The LLM sometimes emits import statements inside the snippet despite
     # being instructed not to.  extract_imports handles edge cases like
-    # ``import os; x = 1`` cleanly.
+    # ``import os; x = 1`` cleanly.  We preserve non-target imports (e.g.,
+    # ``import pytest``) that the LLM may legitimately need for
+    # ``pytest.raises()`` or ``pytest.approx()``.
     try:
-        clean_snippet, _ = extract_imports(snippet)
+        clean_snippet, extracted_imports = extract_imports(snippet)
     except Exception:
-        clean_snippet = snippet  # fallback — keep snippet as-is
+        clean_snippet = snippet
+        extracted_imports = []
 
-    return f"{import_stmt}{clean_snippet}\n"
+    # Filter out the target import (already added via resolve_import_for_test)
+    # to avoid duplication. Keep everything else (import pytest, from pathlib, etc.)
+    target_normalized = import_stmt.strip().replace(" ", "")
+    preserved_imports = [
+        imp for imp in extracted_imports
+        if imp.strip().replace(" ", "") != target_normalized
+    ]
+
+    header = import_stmt
+    if preserved_imports:
+        header += "\n".join(preserved_imports) + "\n"
+
+    return f"{header}{clean_snippet}\n"
 
 
 def _run_pytest(test_target: str) -> tuple[bool, str]:

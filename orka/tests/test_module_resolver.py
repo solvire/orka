@@ -62,6 +62,23 @@ def test_node_id_unknown_prefix_treated_as_class_or_function():
     assert node_id_to_module("Other:deeply.nested.Thing") == "deeply.nested"
 
 
+def test_node_id_trailing_dot_returns_none():
+    # A trailing dot produces an empty final part — malformed node ID.
+    assert node_id_to_module("Class:myapp.") is None
+
+
+def test_node_id_leading_dot_after_prefix_returns_none():
+    assert node_id_to_module("Class:.myapp.User") is None
+
+
+def test_node_id_double_dot_returns_none():
+    assert node_id_to_module("Function:app..helpers.calc") is None
+
+
+def test_node_id_method_trailing_dot_returns_none():
+    assert node_id_to_module("Method:orka.core.compiler.") is None
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # file_to_module
 # ═══════════════════════════════════════════════════════════════════════
