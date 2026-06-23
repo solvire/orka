@@ -29,6 +29,7 @@ import libcst as cst
 
 from orka.config import settings
 from orka.core.compiler import PromptCompiler
+from orka.core.locator import get_signature
 from orka.core.rule_resolver import resolve_rules
 from orka.operations.graph_helpers import (
     build_caller_constraints,
@@ -43,83 +44,18 @@ from orka.operations.helpers import load_template
 logger = logging.getLogger(__name__)
 
 
-# ── LibCST visitors for signature analysis ─────────────────────────────
-
-
-class _SignatureCollector(cst.CSTVisitor):
-    """Extract signature-level info from a method/function definition."""
-
-    def __init__(self) -> None:
-        """Initialise the collector.
-
-        Attributes set after visiting a function definition:
-        - ``params``: list of parameter strings (e.g. ``"x: int"``)
-        - ``has_return_annotation``: whether a return type was declared
-        - ``return_annotation``: the raw return type string
-        - ``docblock``: the first docstring in the function body
-        - ``has_decorators``: whether any decorators are present
-        - ``decorator_count``: number of decorators
-        - ``is_async``: whether the function is ``async def``
-        - ``name``: the function/method name
-        """
-        self.params: list[str] = []
-        self.has_return_annotation = False
-        self.return_annotation: str = ""
-        self.docblock: str = ""
-        self.has_decorators = False
-        self.decorator_count = 0
-        self.is_async = False
-        self.name: str = ""
-
-    def visit_FunctionDef(self, node: cst.FunctionDef) -> bool | None:
-        """Extract signature metadata from a single function definition.
-
-        Populates ``self`` attributes with:
-        - name, async status, decorator count
-        - parameter names and annotations
-        - return annotation
-        - first docstring in the body
-
-        Returns ``False`` to prevent descending into nested functions.
-        """
-        self.name = node.name.value
-        self.is_async = node.asynchronous is not None
-        self.has_decorators = bool(node.decorators)
-        self.decorator_count = len(node.decorators)
-
-        # Extract parameters
-        for param in node.params.params:
-            p_name = param.name.value if hasattr(param, "name") else str(param)
-            p_annotation = ""
-            if hasattr(param, "annotation") and param.annotation:
-                p_annotation = cst.Module(body=[]).code_for_node(param.annotation.annotation)
-            if p_annotation:
-                self.params.append(f"{p_name}: {p_annotation}")
-            else:
-                self.params.append(p_name)
-
-        # Return annotation
-        if node.returns:
-            self.has_return_annotation = True
-            self.return_annotation = cst.Module(body=[]).code_for_node(node.returns.annotation)
-
-        # Docblock (first statement in body)
-        if node.body.body:
-            first_stmt = node.body.body[0]
-            if isinstance(first_stmt, cst.SimpleStatementLine):
-                for stmt in first_stmt.body:
-                    if isinstance(stmt, cst.Expr) and isinstance(stmt.value, cst.SimpleString):
-                        self.docblock = stmt.value.value.strip('"').strip("'").strip()
-
-        return False  # Don't descend into nested functions
+# ── Signature analysis ──────────────────────────────────────────────────
 
 
 def _analyse_signature(existing_code: str) -> dict[str, Any]:
     """Parse a method/function definition and return structured signature info.
 
-    Uses LibCST to extract the first function definition found in the code
-    snippet.  If parsing fails (e.g. the snippet is empty or syntactically
-    invalid), returns a default dict with empty values — this is non-fatal.
+    Thin wrapper around :func:`orka.core.locator.get_signature`.  The heavy
+    CST extraction (params, return type, docblock, decorators, async status)
+    now lives in the locator module — the single source of truth.
+
+    If parsing fails (e.g. the snippet is empty or syntactically invalid),
+    returns a default dict with empty values — this is non-fatal.
 
     Parameters
     ----------
@@ -130,13 +66,8 @@ def _analyse_signature(existing_code: str) -> dict[str, Any]:
     Returns
     -------
     dict
-        Keys:
-        - ``name`` (str): function/method name
-        - ``params`` (list[str]): parameter strings, e.g. ``["x: int", "y"]``
-        - ``return_type`` (str): return annotation, e.g. ``"bool"``
-        - ``docblock`` (str): first docstring in the body
-        - ``is_async`` (bool): whether the function is ``async def``
-        - ``decorator_count`` (int): number of decorators
+        Keys: ``name``, ``params``, ``return_type``, ``docblock``,
+        ``is_async``, ``decorator_count``.
     """
     result: dict[str, Any] = {
         "name": "",
@@ -152,16 +83,17 @@ def _analyse_signature(existing_code: str) -> dict[str, Any]:
 
     try:
         tree = cst.parse_module(existing_code)
-        collector = _SignatureCollector()
-        tree.visit(collector)
-
-        result["name"] = collector.name
-        result["params"] = collector.params
-        result["return_type"] = collector.return_annotation
-        result["docblock"] = collector.docblock
-        result["is_async"] = collector.is_async
-        result["decorator_count"] = collector.decorator_count
-
+        # The snippet is a single function definition (from extract_method_source);
+        # grab the first top-level FunctionDef, decorators included.
+        node = next((s for s in tree.body if isinstance(s, cst.FunctionDef)), None)
+        if node is not None:
+            sig = get_signature(node)
+            result["name"] = sig.name
+            result["params"] = sig.params
+            result["return_type"] = sig.return_annotation
+            result["docblock"] = sig.docstring
+            result["is_async"] = sig.is_async
+            result["decorator_count"] = sig.decorator_count
     except Exception as exc:
         logger.warning("Signature analysis failed (non-fatal): %s", exc)
 
