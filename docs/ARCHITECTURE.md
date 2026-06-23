@@ -21,22 +21,25 @@ orka/
     orchestrator.py   (thin wrapper around surgery graph — backward compat)
     core/
       __init__.py
-      validator.py    (ast.parse validation: snippet + file)
-      cascade.py      (import cascade after class extraction)
+      validator.py    (ast.parse validation: snippet + file + validate_four_gates unified entry point)
+      module_resolver.py (Pure module path resolution: node_id_to_module, file_to_module — stdlib only)
+      dependency_resolver.py (Graph-based symbol resolution: resolve_symbol, resolve_target, build_dependency_map, resolve_undefined_names)
+      import_injector.py (LibCST import mutation: extract_imports, inject_imports, rewrite_import, dedupe_imports, auto_import, resolve_import_for_test, cascade_import_updates, harvest_and_dedupe — all idempotent)
       ingester.py     (NetworkX graph DB + AST visitor)
       vector_store.py (ChromaDB embeddings)
       compiler.py     (%%variable%% prompt compiler with context budgeting)
       templates.py    (Pydantic schemas: PromptTemplate, InjectionRule, InjectionPoint, OutputType)
       rule_resolver.py (.mdc rule parser + three-tier resolution)
-      import_fixer.py (Deterministic import generation for test files)
       init_helper.py  (One-time init: .env, .orka/, Continue.dev rules)
       snippet_utils.py (LLM output sanitization: strip_md_fences, normalize_snippet_indent, sanitize_llm_output)
+      locator.py      (CST node finding: find_method, find_class, get_signature, extract_docstring, extract_docstring_regex)
     surgery/
       __init__.py
       analyzer.py     (dependency scope analysis)
       modifier.py     (LibCST method body replacement + preview_patch; consumes snippet_utils.parse_snippet_to_cst_body)
-      synthesizer.py  (Legacy prompt builders — being replaced)
-      transplanter.py (class extraction + import healing)
+      trivia.py       (Whitespace & docstring preservation: preserve_docstring, normalize_spacing, collapse_blank_lines — pure functions)
+      synthesizer.py  (Method/class source extraction via core.locator)
+      transplanter.py (class extraction + import healing via import_injector.harvest_and_dedupe)
     operations/
       __init__.py
       graph.py        (LangGraph state machine — surgery pipeline)
@@ -65,6 +68,11 @@ orka/
     tests/
       TEST_MANIFEST.md
       test_validator.py
+      test_module_resolver.py
+      test_dependency_resolver.py
+      test_import_injector.py
+      test_locator.py
+      test_trivia.py
       test_standalone_function.py
       test_refactor_result.py
       test_modifier.py
@@ -73,7 +81,6 @@ orka/
       test_orka_cascade.py
       test_orka_dual_brain.py
       test_orka_edge_cases.py
-      test_orka_synthesizer.py
       test_orka_transplanter.py
       test_snippet_utils.py  (24 tests: strip_md_fences, normalize_snippet_indent, sanitize_llm_output)
       ...
@@ -85,7 +92,7 @@ orka/
 |---------|-------------|-------------|
 | `orka scan` | `cli.py` | Build dependency graph + vector DB |
 | `orka inspect --id` | `cli.py` | Query graph node neighbors |
-| `orka extract --file --cls --dest` | `cli.py` -> `transplanter.py` -> `cascade.py` | Move class, heal imports |
+| `orka extract --file --cls --dest` | `cli.py` -> `transplanter.py` -> `import_injector.py` | Move class, heal imports |
 | `orka refactor --file --method --req [--cls\|--func] [--json] [--dry-run]` | `cli.py` -> `graph.py` -> `controllers/*` -> `modifier.py` | LLM-synthesize method body |
 | `orka testgen --file --method [--cls\|--func] [--output] [--run] [--n] [--rule]` | `cli.py` -> `graph.py` -> `controllers/*` | LLM-generate pytest tests |
 | `orka prompt --template [--rule] [--file] [--cls] [--method]` | `cli.py` -> `controllers/context.py` -> `controllers/compiler_node.py` | Compile & display prompt (no LLM) |
@@ -114,7 +121,7 @@ flowchart TD
 | `gather_context` | `controllers/context.py` | Fast LLM (HyDE) | Extract source, generate semantic query, search ChromaDB, backup file |
 | `compile_prompt` | `controllers/compiler_node.py` | No | Signature analysis, graph enrichment, template rendering with `%%var%%` |
 | `generate_draft` | `controllers/generator.py` | Yes (smart) | Invoke LLM with compiled prompt, multi-pass sanitization via `snippet_utils.sanitize_llm_output` |
-| `validate_draft` | `controllers/validator.py` | No | 4-gate validation: snippet AST, assembly, file AST, pytest |
+| `validate_draft` | `controllers/validator.py` | No | Thin wrapper around `core/validator.py:validate_four_gates` — 4-gate validation: snippet AST, assembly, file AST, pytest |
 | `fix_draft` | `controllers/fixer.py` | Yes (smart) | Fix failing draft with validation error context |
 
 ### State schema (`state.py`)
@@ -376,6 +383,45 @@ flowchart LR
 
 Both AST gates use `ast.parse()`. The snippet gate wraps bare statements in a dummy
 function so that `return x`, `raise`, etc. parse correctly.
+
+The unified entry point `core/validator.py:validate_four_gates()` consolidates
+all four gates into a single callable. The controller
+(`operations/controllers/validator.py:execute`) is a thin wrapper that maps
+the `SurgeryState` dict to `validate_four_gates` arguments and translates the
+result tuple back to state fields.
+
+## Three-Way Import Split (v0.2.0)
+
+The old `import_fixer.py` (429 lines) and `cascade.py` (131 lines) conflated
+three distinct concerns. They were split into clean, locally-targeted modules
+with discrete idempotent functions:
+
+| Module | Concern | Dependencies | Key Functions |
+|--------|---------|-------------|---------------|
+| `core/module_resolver.py` | Pure module path resolution | stdlib only | `node_id_to_module`, `file_to_module` |
+| `core/dependency_resolver.py` | Graph-based symbol lookup | module_resolver + graph DB | `resolve_symbol`, `resolve_target`, `build_dependency_map`, `resolve_undefined_names` |
+| `core/import_injector.py` | LibCST import mutation | dependency_resolver + LibCST | `extract_imports`, `inject_imports`, `rewrite_import`, `dedupe_imports`, `auto_import`, `resolve_import_for_test`, `cascade_import_updates`, `harvest_and_dedupe` |
+
+Dependency layering: A (module_resolver) → B (dependency_resolver) → C (import_injector).
+Each is independently testable. All import_injector functions are idempotent
+(source in → source out, re-running is a no-op), designed to be run
+unconditionally in sequence like linting passes.
+
+**Deleted:** `import_fixer.py`, `cascade.py` — all logic consolidated.
+**Also stripped:** `SnippetImportExtractor` from `modifier.py` (replaced by
+`import_injector.extract_imports`), `process_imports` from `transplanter.py`
+(replaced by `import_injector.harvest_and_dedupe`).
+
+## CST Finding & Trivia (v0.2.0)
+
+| Module | Concern | Key Functions |
+|--------|---------|---------------|
+| `core/locator.py` | CST node location + signature extraction | `find_method`, `find_class`, `get_signature`, `extract_docstring`, `extract_docstring_regex` |
+| `surgery/trivia.py` | Whitespace & docstring preservation | `preserve_docstring`, `normalize_spacing`, `collapse_blank_lines` |
+
+LibCST 1.8.x has a flat grammar — there is no `AsyncFunctionDef` node. Async
+methods are `FunctionDef` nodes where `node.asynchronous is not None`. The
+locator handles this correctly; no `visit_AsyncFunctionDef` is ever defined.
 
 ## Key Dependencies
 

@@ -51,9 +51,10 @@ stateDiagram-v2
 
 ### validate_draft
 - **Gate 1:** Snippet AST — `ast.parse` on the snippet alone (wrapped in dummy function)
-- **Gate 2:** Assembly — LibCST patch into source (refactor) or `resolve_import` + assembly (testgen)
+- **Gate 2:** Assembly — LibCST patch into source (refactor) or `resolve_import_for_test` + `extract_imports` (testgen), all via `import_injector.py`
 - **Gate 3:** File AST — `ast.parse` on the fully assembled file
 - **Gate 4:** Disk write + pytest — write to real path, run `pytest --exitfirst --tb=short`, truncate output
+- Unified entry point: `core/validator.py:validate_four_gates()` — controller is a thin wrapper
 - Populate `draft_file_content`, `validation_output`, and `is_valid`
 - Set `fatal_error` if unrecoverable
 
@@ -94,7 +95,7 @@ flowchart TD
     O --> P{Gate 1: snippet AST}
     P -->|pass| Q{Gate 2: assembly}
     Q -->|refactor| R[preview_patch → parse_snippet_to_cst_body]
-    Q -->|testgen| S[resolve_import + assembly]
+    Q -->|testgen| S[resolve_import_for_test + extract_imports]
     R --> T{draft_file_content}
     S --> T
     T --> U{Gate 3: file AST}

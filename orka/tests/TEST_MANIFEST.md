@@ -1,246 +1,99 @@
 # Orka Test Manifest
 
 > Auto-generated. Updated when tests are added or changed.
+> Last updated: v0.2.0 — Shared Controls Consolidation (7 phases).
 
-## Test E2E Smoke (`orka/tests/test_e2e_smoke.py`) — 1 test
+## Summary
 
-> **Live E2E test.** Calls the real LLM API (no mocks). Automatically skipped
-> when no API key is configured (`settings.get_api_key()` returns empty).
+**420 test definitions across 23 test files.** 419 pass, 1 pre-existing failure
+(`test_compile_real_test_template` — template key mismatch, unrelated to consolidation).
 
-### TestLiveRefactorPipelineDryRun (1 test)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_live_refactor_pipeline_dry_run` | Full LangGraph pipeline (dry-run): `gather_context` → `compile_prompt` → `generate_draft` → `validate_draft` → terminal. Asserts `is_valid`, `fatal_error is None`, `"+ 10"` in `draft_snippet`, assembled file is non-empty and contains `Calculator`, and source file is unmodified. |
+### Test files by count
 
----
-
-## Test Validator (`tests/test_validator.py`) — 24 tests
-
-### TestIndentBody (3 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_indents_each_line` | Indents each line with 4 spaces |
-| 2 | `test_handles_empty_string` | Empty string returns empty |
-| 3 | `test_preserves_blank_lines` | Blank lines remain blank |
-| 4 | `test_strips_no_leading_whitespace_from_input` | Does not strip leading whitespace |
-
-### TestValidateCodeSnippet (13 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_valid_simple_return` | Plain return statement is valid |
-| 2 | `test_valid_multi_line_body` | Multi-line method body with expressions |
-| 3 | `test_valid_with_docstring` | Method body with docstring parses |
-| 4 | `test_invalid_syntax` | Bare syntax error caught |
-| 5 | `test_invalid_indented_block_mismatch` | Mismatched indentation error |
-| 6 | `test_empty_string` | Empty code fails |
-| 7 | `test_whitespace_only` | Whitespace-only fails |
-| 8 | `test_uses_label_in_error` | Label appears in error message |
-| 9 | `test_valid_complex_code` | try/except and context managers |
-| 10 | `test_async_code` | Async/await syntax |
-| 11 | `test_walrus_operator` | Walrus operator `:=` |
-| 12 | `test_type_annotations_in_body` | Type annotations in assignments |
-| 13 | `test_fstring_with_braces` | f-strings with braces |
-
-### TestValidateFile (7 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_valid_file` | Syntactically valid Python file |
-| 2 | `test_file_with_syntax_error` | File with syntax error fails |
-| 3 | `test_nonexistent_file` | Missing file fails with clear message |
-| 4 | `test_empty_file` | Empty file is valid Python |
-| 5 | `test_file_with_only_comment` | File with only comment is valid |
-| 6 | `test_file_with_class_and_methods` | Realistic file with class |
-| 7 | `test_file_with_unicode` | Unicode characters handled |
-
-### TestValidationResult (4 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_bool_true_when_passed` | bool(ValidationResult(passed=True)) is True |
-| 2 | `test_bool_false_when_not_passed` | bool(ValidationResult(passed=False)) is False |
-| 3 | `test_passed_repr` | "PASSED" in repr |
-| 4 | `test_failed_repr` | "FAILED", line number, and message in repr |
-
-## Test RefactorResult (`tests/test_refactor_result.py`) — 9 tests
-
-### TestRefactorResult (4 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_success_result` | Success result with all fields |
-| 2 | `test_failure_result` | Failure result with error message |
-| 3 | `test_default_diff_is_empty` | Default diff is empty string |
-| 4 | `test_default_error_is_none` | Default error is None |
-
-### TestComputeDiff (5 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_no_changes` | No diff when code unchanged |
-| 2 | `test_simple_addition` | Diff shows addition |
-| 3 | `test_multi_line` | Multi-line diff |
-| 4 | `test_new_file` | Diff for new file (empty before) |
-| 5 | `test_deletion` | Diff shows deletion |
-
-## Test Helpers (`tests/test_helpers.py`) — 14 tests
-
-### TestLoadTemplate (4 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_load_real_refactor_template` | Loads real refactor.yaml, checks name, output_type, injection_points, metadata |
-| 2 | `test_load_real_test_template` | Loads real test.yaml, checks name, output_type, injection_points |
-| 3 | `test_load_template_with_injection_points` | Creates fake YAML with injection_points strings, verifies they become InjectionPoint enums |
-| 4 | `test_load_template_raises_file_not_found` | FileNotFoundError for nonexistent template |
-
-### TestExtractErrorSummary (4 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_extracts_failures_section` | Extracts FAILURES section, stopping before short test summary |
-| 2 | `test_falls_back_to_tail_lines` | Falls back to last lines when no FAILURES section |
-| 3 | `test_returns_output_when_no_failures_and_few_lines` | Returns content when short and no FAILURES |
-| 4 | `test_empty_output_returns_empty` | Empty output returns empty string |
-
-### TestTruncateErrorSummary (3 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_short_summary_unchanged` | Under max_chars, unchanged |
-| 2 | `test_long_summary_truncated` | Long output truncated with marker |
-| 3 | `test_truncation_has_head_tail_and_marker` | Truncated output has head, marker, tail |
-
-### TestBuildFixerPrompt (3 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_builds_testgen_prompt` | Builds testgen fix prompt with all context |
-| 2 | `test_builds_refactor_prompt` | Builds refactor fix prompt with all context |
-| 3 | `test_build_includes_test_file_target_when_provided` | Accepts test_file_target parameter |
-
-## Test Prompt Compiler (`tests/test_prompt_compiler.py`) — 35 tests
-
-> Imports from `orka.core.rule_resolver` (parse_mdc_file, load_rules_from_directory,
-> resolve_rules), `orka.core.compiler` (PromptCompiler, _enforce_rule_budget), and
-> `orka.core.import_fixer` (resolve_import). The old `orka.core.prompt_compiler` module
-> was split into these three during the Phase 2 refactoring.
-
-### TestOutputTypeEnum (3 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_values` | OutputType.body == "body", .standalone == "standalone", .new_file == "new_file" |
-| 2 | `test_from_string` | OutputType("body") == OutputType.body |
-| 3 | `test_all_members_covered` | All 3 enum members exist |
-
-### TestInjectionPointEnum (2 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_values` | All 5 injection points (system_header, constraints_top, constraints_bottom, quality_gates, style_guide) |
-| 2 | `test_from_string` | InjectionPoint("system_header") == InjectionPoint.system_header |
-
-### TestPromptTemplate (4 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_minimal_creation` | name, system, user — output_type defaults to body |
-| 2 | `test_with_injection_points` | injection_points accepts list of InjectionPoint enums |
-| 3 | `test_output_type_standalone` | output_type can be set to standalone |
-| 4 | `test_extra_fields_ignored` | extra="ignore" swallows unknown fields |
-
-### TestInjectionRule (4 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_minimal_creation` | name, text — defaults: tier=1, priority=100, applies_to=["*"] |
-| 2 | `test_with_all_fields` | All fields including tier=3, priority=10, applies_to=["test"] |
-| 3 | `test_tier_excluded_from_serialisation` | tier has exclude=True in model_dump() |
-| 4 | `test_applies_to_default_wildcard` | Default applies_to is ["*"] |
-
-### TestParseMdcFile (3 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_parse_builtin_no_imports` | Parse .mdc with `---` frontmatter, check name, injection_point, priority |
-| 2 | `test_parse_builtin_use_pytest_raises` | Parse .mdc, check injection_point==constraints_bottom, applies_to=["test"] |
-| 3 | `test_parse_builtin_test_behavior_not_mocks` | Parse .mdc, check injection_point==quality_gates |
-
-### TestLoadRulesFromDirectory (2 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_loads_all_builtin_rules` | Loads 4 rules from temporary directory (uses `---` frontmatter format) |
-| 2 | `test_all_builtin_rules_have_tier_1` | Every rule loaded has tier=1 |
-
-### TestResolveRules (4 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_resolve_for_refactor_template` | refactor gets 2 universal rules; writes .mdc files to tmp_path, passes builtin_rules_dir |
-| 2 | `test_resolve_for_test_template` | test gets all 4 rules |
-| 3 | `test_resolve_filters_by_injection_point` | Only matching injection points returned |
-| 4 | `test_resolve_rules_are_sorted` | Rules sorted by (priority, -tier, name) ascending |
-
-### TestEnforceRuleBudget (3 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_all_rules_fit` | All rules kept when under budget |
-| 2 | `test_drops_lowest_priority` | Drops least important when over budget |
-| 3 | `test_single_rule_exceeds_budget` | A single rule exceeding budget is dropped (graceful degradation) |
-
-### TestPromptCompiler (6 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_compile_minimal` | PromptCompiler().compile() with one rule and context |
-| 2 | `test_compile_without_rules` | Compile with zero rules still produces output |
-| 3 | `test_compile_real_refactor_template` | Load refactor.yaml, resolve rules from builtin dir, compile with all context keys |
-| 4 | `test_compile_real_test_template` | Load test.yaml, resolve rules from builtin dir, compile with all context keys |
-| 5 | `test_all_injection_points_get_context` | No raw %% remain when all points have empty fallbacks |
-| 6 | `test_compiler_different_instances_independent` | Two compiler instances produce different output for different inputs |
-
-### TestResolveImport (4 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_resolve_from_file_path_with_class` | Returns "from src.payments.processor import OrderProcessor\n" |
-| 2 | `test_resolve_from_file_path_with_method` | Returns import with method_name |
-| 3 | `test_resolve_class_takes_precedence_over_method` | class_name is used, method_name is ignored |
-| 4 | `test_resolve_none_when_resolution_fails` | Empty file_path returns None |
-
-## ~~Test Orka Synthesizer~~ (`tests/test_orka_synthesizer.py`) — DELETED
-
-> Removed in 20260615 session. The `build_synthesis_prompt` function it tested no longer
-> exists in `orka.surgery.synthesizer`. The remaining functions (`extract_method_source`,
-> `extract_class_source`) are tested by `test_orka_transplanter.py`.
-
-## Test CLI Commands (`tests/test_cli_commands.py`) — 4 tests
-
-> Import fixed: `from orka.cli import cli` → `from orka.cli import app as cli`.
-
-### TestPromptCommand (2 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_basic_prompt` | Prompt command runs without error with basic arguments |
-| 2 | `test_prompt_unknown_option` | Unrecognised option produces an error |
-
-### TestTestgenCommand (2 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_testgen_basic` | testgen command runs without error |
-| 2 | `test_testgen_requires_code` | testgen fails if no code provided |
+| File | Tests | Module tested |
+|------|-------|---------------|
+| `test_import_injector.py` | 66 | `orka.core.import_injector` (extract, inject, rewrite, dedupe, auto_import, cascade, harvest) |
+| `test_dependency_resolver.py` | 45 | `orka.core.dependency_resolver` (resolve_symbol, resolve_target, build_dependency_map, resolve_undefined_names) |
+| `test_validator.py` | 38 | `orka.core.validator` (validate_code_snippet, validate_file, validate_four_gates, ValidationResult) |
+| `test_prompt_compiler.py` | 35 | `orka.core.compiler` + `orka.core.rule_resolver` + `orka.core.import_injector.resolve_import_for_test` |
+| `test_locator.py` | 28 | `orka.core.locator` (find_method, find_class, get_signature, extract_docstring, extract_docstring_regex) |
+| `test_snippet_utils.py` | 24 | `orka.core.snippet_utils` (strip_md_fences, normalize_snippet_indent, sanitize_llm_output) |
+| `test_module_resolver.py` | 23 | `orka.core.module_resolver` (node_id_to_module, file_to_module — incl. trailing-dot edge cases) |
+| `test_trivia.py` | 21 | `orka.surgery.trivia` (preserve_docstring, normalize_spacing, collapse_blank_lines) |
+| `test_orka_transplanter.py` | 19 | `orka.surgery.transplanter` (class extraction + import healing) |
+| `test_orka_analyzer.py` | 19 | `orka.surgery.analyzer` (dependency scope analysis) |
+| `test_modifier.py` | 16 | `orka.surgery.modifier` (MethodBodyReplacer, preview_patch, apply_llm_patch) |
+| `test_import_fixer_detect_undefined.py` | 15 | `orka.core.dependency_resolver._detect_undefined_names` (legacy filename, tests now hit dependency_resolver) |
+| `test_import_fixer_stdlib_fallback.py` | 14 | `orka.core.dependency_resolver._stdlib_fallback` (legacy filename) |
+| `test_helpers.py` | 14 | `orka.operations.helpers` (template loading, error truncation, fixer prompt) |
+| `test_standalone_function.py` | 9 | Standalone function refactoring |
+| `test_refactor_result.py` | 9 | `orka.orchestrator.RefactorResult` + `_compute_diff` |
+| `test_orka_cascade.py` | 5 | `orka.core.import_injector.cascade_import_updates` (legacy filename) |
+| `test_orchestrator.py` | 5 | `orka.orchestrator.Orchestrator` |
+| `test_orka_edge_cases.py` | 4 | Edge cases in surgery pipeline |
+| `test_ingester.py` | 4 | `orka.core.ingester.OrkaGraphDB` |
+| `test_cli_commands.py` | 4 | `orka.cli` (prompt + testgen commands) |
+| `test_orka_dual_brain.py` | 2 | Dual-brain (smart + fast) LLM routing |
+| `test_e2e_smoke.py` | 1 | Live E2E (skipped without API key) |
 
 ---
 
-## Test SnippetImportExtractor (`tests/test_snippet_import_extractor.py`) — 8 tests
+## New test files (v0.2.0 consolidation)
 
-> Generated by Orka's own `testgen` pipeline (dogfooding). Tests the
-> `SnippetImportExtractor` CST transformer added to `orka/surgery/modifier.py`.
+### test_module_resolver.py — 23 tests
+Tests `node_id_to_module` (Class:, Function:, Method: nodes, edge cases: no colon,
+empty prefix, single-part, trailing/leading/double dots) and `file_to_module`
+(absolute, relative, `__init__.py`, base_dir stripping, Windows paths).
 
-### TestSnippetImportExtractorGenerated (8 tests)
-| # | Test Name | Description |
-|---|-----------|-------------|
-| 1 | `test_leave_SimpleStatementLine_removes_import_only_line` | Single import statement on its own line is extracted and line removed |
-| 2 | `test_leave_SimpleStatementLine_keeps_non_import_statements` | Non-import lines are left unchanged (no imports to extract) |
-| 3 | `test_leave_SimpleStatementLine_handles_mixed_import_and_code` | `import os; x = 1` on same line — import extracted, code kept |
-| 4 | `test_leave_SimpleStatementLine_handles_import_from` | `from os import path` is extracted as ImportFrom |
-| 5 | `test_leave_SimpleStatementLine_handles_multiple_imports` | Multiple consecutive import lines all extracted |
-| 6 | `test_leave_SimpleStatementLine_handles_empty_body_after_extraction` | Module with only imports becomes empty after extraction |
-| 7 | `test_leave_SimpleStatementLine_handles_no_imports` | All non-import code preserved unchanged |
-| 8 | `test_leave_SimpleStatementLine_handles_empty_module` | Empty module produces no extractions and empty output |
+### test_dependency_resolver.py — 45 tests
+Tests `resolve_symbol` (same-module-first, any-module, None), `resolve_target`
+(graph lookup + file fallback), `build_dependency_map`, `build_caller_constraints`,
+`resolve_undefined_names` (pyflakes + graph + stdlib fallback). Uses mock graph DB.
+
+### test_import_injector.py — 66 tests
+Tests all idempotent primitives: `extract_imports` (all/filtered, ImportStar,
+mixed lines), `inject_imports` (dedup, empty source, bare import),
+`rewrite_import` (simple, multi-name split, no-op, idempotent),
+`dedupe_imports` (merge, sort, empty), plus orchestrators `auto_import`,
+`resolve_import_for_test`, `cascade_import_updates`, `harvest_and_dedupe`.
+
+### test_locator.py — 28 tests
+Tests `find_method` (simple, nested `Outer.Inner`, standalone, async,
+not-found), `find_class`, `get_signature` (params, return type, decorators,
+async), `extract_docstring` (CST-based), `extract_docstring_regex`.
+
+### test_trivia.py — 21 tests
+Tests `preserve_docstring` (original has + new lacks → prepend; both have →
+new wins; neither → unchanged), `normalize_spacing` (collapse blanks, spacing
+after imports, before defs), `collapse_blank_lines`.
 
 ---
 
-**Total: 206 test definitions across 17 test files**
+## Deleted test files (v0.2.0)
 
-> NOTE: Only 6 of the 17 test files are detailed above. The remaining 11 files
-> (test_ingester, test_modifier, test_orchestrator, test_orka_analyzer,
-> test_orka_cascade, test_orka_dual_brain, test_orka_edge_cases,
-> test_orka_transplanter, test_snippet_utils, test_standalone_function,
-> test_cli_commands)
-> are not yet documented in this manifest.
+| File | Reason |
+|------|--------|
+| `test_snippet_import_extractor.py` | `SnippetImportExtractor` deleted from `modifier.py` — replaced by `import_injector.extract_imports` |
+| `test_import_fixer_inject_imports.py` | `_inject_imports` moved to `import_injector.py` — folded into `test_import_injector.py` |
+| `test_import_fixer_module_from_node_id.py` | `_module_from_node_id` moved to `module_resolver.py` — folded into `test_module_resolver.py` |
+| `test_orka_synthesizer.py` | Deleted in earlier session (`build_synthesis_prompt` no longer exists) |
+
+---
+
+## Legacy test files (kept, updated imports)
+
+### test_import_fixer_detect_undefined.py — 15 tests
+> Tests `dependency_resolver._detect_undefined_names`. Filename retained for
+> git history; imports updated to point at `dependency_resolver`.
+
+### test_import_fixer_stdlib_fallback.py — 14 tests
+> Tests `dependency_resolver._stdlib_fallback`. Filename retained; imports updated.
+
+### test_orka_cascade.py — 5 tests
+> Tests `import_injector.cascade_import_updates`. Filename retained; imports updated.
+
+### test_prompt_compiler.py — 35 tests
+> Imports `resolve_import_for_test` from `orka.core.import_injector` (was
+> `orka.core.import_fixer`). The `test_compile_real_test_template` test
+> FAILS — pre-existing template key mismatch (`data_construction_guide`
+> not in context). Not related to consolidation.
