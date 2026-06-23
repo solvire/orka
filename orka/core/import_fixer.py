@@ -15,6 +15,7 @@ import ast
 import logging
 import os
 from typing import Optional
+from orka.core.module_resolver import node_id_to_module, file_to_module
 
 import libcst as cst
 from libcst.codemod import CodemodContext
@@ -154,7 +155,7 @@ def _lookup_in_graph(
         if attrs.get("name") != name:
             continue
 
-        module_path = _module_from_node_id(node_id)
+        module_path = node_id_to_module(node_id)
         if module_path:
             return module_path, name
 
@@ -368,7 +369,7 @@ def _from_graph(
             if not norm_file.endswith(norm_attr) and not norm_attr.endswith(norm_file):
                 continue
 
-        module_path = _module_from_node_id(node_id)
+        module_path = node_id_to_module(node_id)
         if module_path:
             return f"from {module_path} import {target_name}\n"
 
@@ -386,41 +387,8 @@ def _from_file_path(
     method_name: Optional[str] = None,
     workspace_dir: str = "",
 ) -> Optional[str]:
-    """Convert a file path to a dotted module path.
-
-    Handles absolute paths, relative paths, ``__init__.py`` files, and
-    files without a workspace prefix.
-
-    Examples
-    --------
-    ``/home/project/src/payments/processor.py`` →
-    ``from src.payments.processor import OrderProcessor``
-
-    ``/home/project/src/payments/__init__.py`` →
-    ``from src.payments import OrderProcessor``
-    """
-    # Normalise
-    path = os.path.normpath(file_path)
-    if not path:
-        return None
-
-    # Strip workspace prefix if present
-    if workspace_dir:
-        ws = os.path.normpath(workspace_dir)
-        if path.startswith(ws):
-            path = path[len(ws):].lstrip("/").lstrip("\\")
-
-    # Remove .py extension
-    if path.endswith(".py"):
-        path = path[:-3]
-    # Handle __init__.py → parent directory
-    if path.endswith("/__init__") or path.endswith("\\__init__"):
-        path = os.path.dirname(path)
-
-    # Convert slashes to dots
-    module_path = path.replace("/", ".").replace("\\", ".")
-    # Strip leading dot if any
-    module_path = module_path.lstrip(".")
+    """Convert a file path to a dotted module path."""
+    module_path = file_to_module(file_path, workspace_dir)
 
     import_name = class_name or method_name
     if not import_name or not module_path:
