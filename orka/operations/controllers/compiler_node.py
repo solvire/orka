@@ -29,14 +29,16 @@ import libcst as cst
 
 from orka.config import settings
 from orka.core.compiler import PromptCompiler
-from orka.core.rule_resolver import resolve_rules
-from orka.operations.graph_helpers import (
+from orka.core.dependency_resolver import (
     build_caller_constraints,
     build_dependency_map,
+    resolve_target,
+)
+from orka.core.rule_resolver import resolve_rules
+from orka.operations.graph_helpers import (
     get_graph_db,
     render_caller_constraints_table,
     render_dependency_map_table,
-    resolve_target_module,
 )
 from orka.operations.helpers import load_template
 
@@ -258,8 +260,9 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
     graph_db = get_graph_db()
 
     # ── 5. Resolve target's own module path ───────────────────────────
-    target_module = resolve_target_module(
-        source_file, method_name, class_name, graph_db,
+    target_module = resolve_target(
+        graph_db, source_file, method_name, class_name,
+        base_dir=str(settings.PROJECT_ROOT),
     )
 
     # node_id_to_module already strips the class name for Method: nodes
@@ -271,6 +274,7 @@ def execute(state: dict[str, Any]) -> dict[str, Any]:
     # ── 6. Build dependency map and caller constraints ─────────────────
     dep_map = build_dependency_map(
         source_file, method_name, class_name, graph_db,
+        base_dir=str(settings.PROJECT_ROOT),
     )
     caller_constraints = build_caller_constraints(
         source_file, method_name, class_name, graph_db,

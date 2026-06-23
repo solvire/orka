@@ -9,13 +9,16 @@ Provides two entry points:
   resolves them via the Graph DB, and injects the correct imports at the
   top of the file via LibCST's ``AddImportsVisitor``.
   Used by the **refactor** pipeline after a body swap.
+
+Symbol resolution is delegated to :mod:`orka.core.dependency_resolver`;
+this module owns only the **injection concern** — LibCST's
+``AddImportsVisitor`` and the ``from ... import ...`` statement formatting.
 """
 
-import ast
 import logging
-import os
 from typing import Optional
-from orka.core.module_resolver import node_id_to_module, file_to_module
+
+from orka.core.dependency_resolver import resolve_target, resolve_undefined_names
 
 import libcst as cst
 from libcst.codemod import CodemodContext
@@ -61,11 +64,7 @@ def auto_import(
         The source with imports added at the top.  If no undefined names
         are detected, returns the source unchanged.
     """
-    undefined_names = _detect_undefined_names(source, file_path)
-    if not undefined_names:
-        return source
-
-    resolved = _resolve_undefined(undefined_names, graph_db)
+    resolved = resolve_undefined_names(source, graph_db=graph_db, file_path=file_path)
     if not resolved:
         return source
 
@@ -73,123 +72,7 @@ def auto_import(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Step 1 — Detect undefined names via pyflakes
-# ═══════════════════════════════════════════════════════════════════════
-
-
-def _detect_undefined_names(source: str, file_path: str = "") -> list[str]:
-    """Return a sorted, deduplicated list of undefined names in *source*.
-
-    Uses ``pyflakes`` under the hood (same engine used by IDEs).
-    """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        logger.debug("Cannot parse source for auto-import — syntax error.")
-        return []
-
-    from pyflakes.checker import Checker
-    from pyflakes.messages import UndefinedName
-
-    checker = Checker(tree, file_path or "<string>")
-    names: set[str] = set()
-    for msg in checker.messages:
-        if isinstance(msg, UndefinedName):
-            # message_args is a tuple of (name,)
-            names.add(msg.message_args[0])
-    return sorted(names)
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Step 2 — Resolve undefined names via Graph DB + fallbacks
-# ═══════════════════════════════════════════════════════════════════════
-
-
-def _resolve_undefined(
-    names: list[str],
-    graph_db: Optional[object],
-) -> dict[str, tuple[str, str | None]]:
-    """Map each undefined name to ``(module, obj_or_None)``.
-
-    Resolution order for each name:
-
-    1. **Graph DB lookup** — search for ``Class:``, ``Function:``,
-       or ``Method:`` nodes whose ``name`` matches.
-    2. **Stdlib heuristic** — if the name is a known Python stdlib
-       module, emit ``import <name>``.
-    """
-    resolved: dict[str, tuple[str, str | None]] = {}
-
-    for name in names:
-        module, obj = None, None
-
-        # Strategy A: Graph DB
-        if graph_db is not None:
-            module, obj = _lookup_in_graph(graph_db, name)
-
-        # Strategy B: Stdlib fallback
-        if module is None:
-            module, obj = _stdlib_fallback(name)
-
-        if module:
-            resolved[name] = (module, obj)
-        else:
-            logger.debug("Could not resolve import for '%s' — skipping", name)
-
-    return resolved
-
-
-def _lookup_in_graph(
-    graph_db: object,
-    name: str,
-) -> tuple[Optional[str], Optional[str]]:
-    """Search the graph DB for a ``Class:``, ``Function:``, or ``Method:``
-    node whose ``name`` attribute matches *name*.
-
-    Returns ``(module_path, obj_name)`` or ``(None, None)``.
-    """
-    for node_id, attrs in graph_db.graph.nodes(data=True):
-        node_type = attrs.get("node_type")
-        if node_type not in ("class", "function", "method"):
-            continue
-        if attrs.get("name") != name:
-            continue
-
-        module_path = node_id_to_module(node_id)
-        if module_path:
-            return module_path, name
-
-    return None, None
-
-
-def _stdlib_fallback(name: str) -> tuple[Optional[str], Optional[str]]:
-    """Check if *name* is a known stdlib module.
-
-    Returns ``(name, None)`` for a bare ``import <name>``, or
-    ``(None, None)`` if unknown.
-    """
-    STDLIB_MODULES: set[str] = {
-        "os", "sys", "re", "json", "math", "time", "datetime",
-        "collections", "itertools", "functools", "pathlib",
-        "typing", "uuid", "hashlib", "hmac", "base64",
-        "subprocess", "shutil", "tempfile", "csv", "io",
-        "abc", "enum", "dataclasses", "copy", "textwrap",
-        "logging", "warnings", "fractions", "decimal",
-        "random", "statistics", "inspect", "pprint",
-        "threading", "multiprocessing", "concurrent",
-        "asyncio", "socket", "http", "urllib",
-        "xml", "html", "email", "string", "pickle",
-        "sqlite3", "configparser", "argparse", "fileinput",
-        "glob", "fnmatch", "linecache", "bisect",
-        "heapq", "operator", "weakref", "types",
-    }
-    if name in STDLIB_MODULES:
-        return name, None
-    return None, None
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Step 3 — Inject imports via AddImportsVisitor
+# Import injection via AddImportsVisitor
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -205,7 +88,7 @@ def _inject_imports(
         The full file source.
     imports
         ``{name: (module, obj_or_None)}`` as returned by
-        :func:`_resolve_undefined`.
+        :func:`orka.core.dependency_resolver.resolve_undefined_names`.
 
     Returns
     -------
@@ -249,6 +132,11 @@ def resolve_import(
 ) -> Optional[str]:
     """Resolve ``from <module> import <name>`` for the given target.
 
+    Resolution is delegated to
+    :func:`orka.core.dependency_resolver.resolve_target`, which tries the
+    Graph DB first (when *graph_db* is provided) and falls back to a
+    file-path heuristic.
+
     Parameters
     ----------
     file_path : str
@@ -271,81 +159,15 @@ def resolve_import(
         Something like ``"from src.payments.processor import OrderProcessor\\n"``,
         or ``None`` if resolution fails (e.g. file doesn't exist).
     """
-    # Strategy 1: Graph DB lookup (requires scan)
-    if graph_db is not None:
-        result = _from_graph(graph_db, class_name, method_name, file_path)
-        if result:
-            logger.debug("Import resolved via graph DB: %s", result.strip())
-            return result
-
-    # Strategy 2: Heuristic from file path (always works)
-    result = _from_file_path(file_path, class_name, method_name, workspace_dir)
-    if result:
-        logger.debug("Import resolved via file path: %s", result.strip())
-        return result
-
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Strategy 1 — Graph DB lookup
-# ---------------------------------------------------------------------------
-
-
-def _from_graph(
-    graph_db: object,
-    class_name: Optional[str],
-    method_name: Optional[str],
-    file_path: Optional[str],
-) -> Optional[str]:
-    """Search the graph DB for a matching Class: or Function: node.
-
-    Node IDs look like::
-
-        Class:myapp.models.User
-        Function:app.helpers.calculate_discount
-
-    We extract the dotted module path by stripping the type prefix and
-    removing the final component (which is the class/function name).
-    """
-    target_type = "class" if class_name else "function"
-    target_name = class_name or method_name
-
-    for node_id, attrs in graph_db.graph.nodes(data=True):
-        if attrs.get("node_type") != target_type:
-            continue
-        if attrs.get("name") != target_name:
-            continue
-        # If we know the file path, narrow the search
-        if file_path and attrs.get("file_path"):
-            norm_file = os.path.normpath(file_path)
-            norm_attr = os.path.normpath(attrs["file_path"])
-            if not norm_file.endswith(norm_attr) and not norm_attr.endswith(norm_file):
-                continue
-
-        module_path = node_id_to_module(node_id)
-        if module_path:
-            return f"from {module_path} import {target_name}\n"
-
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Strategy 2 — File path heuristic
-# ---------------------------------------------------------------------------
-
-
-def _from_file_path(
-    file_path: str,
-    class_name: Optional[str] = None,
-    method_name: Optional[str] = None,
-    workspace_dir: str = "",
-) -> Optional[str]:
-    """Convert a file path to a dotted module path."""
-    module_path = file_to_module(file_path, workspace_dir)
-
     import_name = class_name or method_name
-    if not import_name or not module_path:
+    if not import_name:
         return None
 
-    return f"from {module_path} import {import_name}\n"
+    module = resolve_target(
+        graph_db, file_path, method_name, class_name, base_dir=workspace_dir,
+    )
+    if not module:
+        return None
+
+    logger.debug("Import resolved: from %s import %s", module, import_name)
+    return f"from {module} import {import_name}\n"

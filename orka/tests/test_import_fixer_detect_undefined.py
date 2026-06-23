@@ -1,4 +1,4 @@
-from orka.core.import_fixer import _detect_undefined_names
+from orka.core.dependency_resolver import _detect_undefined_names
 def test__detect_undefined_names_empty_source():
     """An empty source string should return an empty list."""
     result = _detect_undefined_names("")

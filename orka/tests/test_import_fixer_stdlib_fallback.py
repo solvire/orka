@@ -1,4 +1,4 @@
-from orka.core.import_fixer import _stdlib_fallback
+from orka.core.dependency_resolver import _stdlib_fallback
 def test__stdlib_fallback_known_module_os():
     """Verify that 'os' returns ('os', None) because it is a known stdlib module."""
     result = _stdlib_fallback("os")
