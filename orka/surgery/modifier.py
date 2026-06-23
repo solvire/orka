@@ -25,43 +25,6 @@ from orka.core.snippet_utils import sanitize_llm_output
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class SnippetImportExtractor(cst.CSTTransformer):
-    """Extracts import statements from a CST snippet and removes them from the tree.
-
-    The LLM is instructed not to include imports in the method body (see
-    ``no_imports_in_body.mdc`` rule), but often disobeys.  This transformer
-    strips them out cleanly — the imports are **discarded**, not hoisted:
-
-    * If a statement line contains *only* imports, the entire line is removed
-      from the parent (via ``cst.RemoveFromParent()``).
-    * If a statement line contains imports mixed with other code, only the
-      import nodes are stripped, leaving the rest of the line intact.
-
-    The refactor pipeline uses ``auto_import()`` (a pyflakes-based scan) to
-    detect genuinely missing imports after the body swap and resolves them
-    via the Graph DB.  The testgen pipeline uses ``resolve_import()`` for
-    deterministic import assembly instead.
-    """
-
-    def __init__(self) -> None:
-        self.extracted_imports: list[cst.BaseSmallStatement] = []
-
-    def leave_SimpleStatementLine(
-        self, original_node: cst.SimpleStatementLine, updated_node: cst.SimpleStatementLine
-    ) -> cst.SimpleStatementLine | cst.RemovalSentinel:
-        new_body: list[cst.BaseSmallStatement] = []
-        for stmt in updated_node.body:
-            if isinstance(stmt, (cst.Import, cst.ImportFrom)):
-                self.extracted_imports.append(stmt)
-            else:
-                new_body.append(stmt)
-
-        if not new_body:
-            return cst.RemoveFromParent()
-
-        return updated_node.with_changes(body=new_body)
-
-
 class MethodBodyReplacer(cst.CSTTransformer):
     """Replace the body of a single method/function, preserving everything else.
 

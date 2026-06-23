@@ -30,7 +30,7 @@ from orka.clients import OrkaClientFactory
 from orka.config import settings
 from orka.core.ingester import OrkaGraphDB
 from orka.surgery.transplanter import transplant_class
-from orka.core.cascade import cascade_import_updates
+from orka.core.import_injector import cascade_import_updates
 from orka.core.init_helper import run_init, show_init_notice, save_status, is_initialized, load_status
 
 # Surgery graph pipeline

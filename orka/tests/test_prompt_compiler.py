@@ -18,7 +18,7 @@ from orka.core.rule_resolver import (
     resolve_rules,
 )
 from orka.core.compiler import PromptCompiler, _enforce_rule_budget
-from orka.core.import_fixer import resolve_import
+from orka.core.import_injector import resolve_import_for_test as resolve_import
 
 
 # ---------------------------------------------------------------------------

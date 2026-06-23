@@ -1,58 +1,24 @@
 import os
 import logging
 import libcst as cst
-from typing import List, Set
-import libcst.matchers as m 
-
-
-from collections import defaultdict
+import libcst.matchers as m
 
 from orka.surgery.analyzer import analyze_code_block
 from orka.core.module_resolver import file_to_module
+from orka.core.import_injector import harvest_and_dedupe
 
 logger = logging.getLogger("Transplanter")
 
 class TransplantTransformer(cst.CSTTransformer):
     """
-    Traverses the source CST to:
-    1. Harvest the full SimpleStatementLine containing required imports.
-    2. Physically extract the target class (preserving leading comments).
+    Physically extracts the target class from the CST (preserving leading
+    comments).  Import harvesting is no longer performed here — callers use
+    :func:`orka.core.import_injector.harvest_and_dedupe` to collect the
+    imports they need.
     """
-    def __init__(self, target_class: str, required_deps: Set[str]):
+    def __init__(self, target_class: str):
         self.target_class = target_class
-        self.required_deps = required_deps
-        
-        self.harvested_imports: List[cst.CSTNode] = []
-        self.found_deps = set()
         self.extracted_node: cst.ClassDef = None
-
-    def visit_SimpleStatementLine(self, node: cst.SimpleStatementLine) -> bool:
-        """We check the wrapper line so we preserve the trailing newlines!"""
-        for stmt in node.body:
-            if isinstance(stmt, cst.Import):
-                found_any = False
-                for alias in stmt.names:
-                    local_name = alias.asname.name.value if alias.asname else alias.name.value
-                    if local_name in self.required_deps:
-                        self.found_deps.add(local_name)
-                        found_any = True
-                if found_any:
-                    self.harvested_imports.append(node)
-                    return False
-
-            elif isinstance(stmt, cst.ImportFrom):
-                if isinstance(stmt.names, cst.ImportStar):
-                    continue
-                found_any = False
-                for alias in stmt.names:
-                    local_name = alias.asname.name.value if alias.asname else alias.name.value
-                    if local_name in self.required_deps:
-                        self.found_deps.add(local_name)
-                        found_any = True
-                if found_any:
-                    self.harvested_imports.append(node)
-                    return False
-        return True
 
     def leave_ClassDef(self, original_node: cst.ClassDef, updated_node: cst.ClassDef) -> cst.CSTNode:
         """Extracts the target class from the AST while preserving comments."""
@@ -61,55 +27,44 @@ class TransplantTransformer(cst.CSTTransformer):
             return cst.RemoveFromParent()
         return updated_node
 
-def process_imports(harvested_imports: List[cst.CSTNode], required_deps: Set[str]) -> List[cst.CSTNode]:
-    final_imports = []
-    from_imports = defaultdict(set)
-    regular_imports = defaultdict(set)
-    
-    for node in harvested_imports:
-        for stmt in node.body:
-            if isinstance(stmt, cst.Import):
-                for alias in stmt.names:
-                    local_name = alias.asname.name.value if alias.asname else alias.name.value
-                    if local_name in required_deps:
-                        name = cst.Module([]).code_for_node(alias.name)
-                        asname = alias.asname.name.value if alias.asname else None
-                        regular_imports[name].add(asname)
-            elif isinstance(stmt, cst.ImportFrom):
-                if isinstance(stmt.names, cst.ImportStar):
-                    continue
-                mod_str = cst.Module([]).code_for_node(stmt.module) if stmt.module else ""
-                rel_dots = len(stmt.relative) if stmt.relative else 0
-                key = (rel_dots, mod_str)
-                
-                for alias in stmt.names:
-                    local_name = alias.asname.name.value if alias.asname else alias.name.value
-                    if local_name in required_deps:
-                        name = alias.name.value
-                        asname = alias.asname.name.value if alias.asname else None
-                        from_imports[key].add((name, asname))
 
-    for name, asnames in regular_imports.items():
-        for asname in asnames:
-            stmt_str = f"import {name} as {asname}" if asname else f"import {name}"
-            final_imports.append(cst.parse_statement(stmt_str))
+def _alias_bound_name(alias: cst.ImportAlias) -> str:
+    """Return the local name bound by an import alias (for dep matching)."""
+    if alias.asname:
+        return alias.asname.name.value
+    name = alias.name
+    if isinstance(name, cst.Name):
+        return name.value
+    if isinstance(name, cst.Attribute):
+        cur = name
+        while isinstance(cur.value, cst.Attribute):
+            cur = cur.value
+        return cur.value.value
+    return ""
 
-    for (rel_dots, mod_str), aliases in sorted(from_imports.items()):
-        sorted_aliases = sorted(aliases, key=lambda x: x[1] if x[1] else x[0])
-        dots = "." * rel_dots
-        
-        name_strs = []
-        for name, asname in sorted_aliases:
-            if asname:
-                name_strs.append(f"{name} as {asname}")
-            else:
-                name_strs.append(name)
-                
-        names_str = ", ".join(name_strs)
-        stmt_str = f"from {dots}{mod_str} import {names_str}"
-        final_imports.append(cst.parse_statement(stmt_str))
-        
-    return final_imports
+
+def _bound_names(import_strings: list[str]) -> set[str]:
+    """Return the set of local names bound by a list of import strings."""
+    names: set[str] = set()
+    for s in import_strings:
+        try:
+            module = cst.parse_module(s)
+        except Exception:
+            continue
+        for stmt in module.body:
+            if not isinstance(stmt, cst.SimpleStatementLine):
+                continue
+            for small in stmt.body:
+                if isinstance(small, cst.Import):
+                    for alias in small.names:
+                        names.add(_alias_bound_name(alias))
+                elif isinstance(small, cst.ImportFrom):
+                    if isinstance(small.names, cst.ImportStar):
+                        continue
+                    for alias in small.names:
+                        names.add(_alias_bound_name(alias))
+    return names
+
 
 def transplant_class(source_file: str, target_class: str, dest_file: str, base_dir: str) -> bool:
     """The Master Transplant Pipeline with Smart Auto-Healing."""
@@ -131,54 +86,57 @@ def transplant_class(source_file: str, target_class: str, dest_file: str, base_d
     if not class_finder:
         logger.error(f"Class '{target_class}' not found in {source_file}.")
         return False
-        
+
     class_source = cst.Module(body=[class_finder[0]]).code
     required_deps = analyze_code_block(class_source)
 
-    # 2. Second pass: Harvest imports and delete class
-    transformer = TransplantTransformer(target_class, required_deps)
+    # 2. Harvest imports (deduped/merged) via import_injector
+    harvested_import_strings = harvest_and_dedupe(source_code, required_deps)
+    found_deps = _bound_names(harvested_import_strings) & required_deps
+
+    # 3. Second pass: Extract the class node
+    transformer = TransplantTransformer(target_class)
     modified_source_tree = source_tree.visit(transformer)
 
     if not transformer.extracted_node:
         logger.error(f"Failed to extract {target_class} from {source_file}.")
         return False
 
-    # 3. THE SMART AUTO-HEALER
-    missing_deps = required_deps - transformer.found_deps
+    # 4. THE SMART AUTO-HEALER
+    missing_deps = required_deps - found_deps
     auto_healed_nodes = []
-    
+
     if missing_deps:
         # Filter out exception aliases and throwaways
         for ignore_var in ['e', '_', 'args', 'kwargs']:
-            if ignore_var in missing_deps:
-                missing_deps.remove(ignore_var)
+            missing_deps.discard(ignore_var)
 
         # Handle Logger specifically
         if 'logger' in missing_deps:
             logger.info("Auto-healing 'logger' instantiation...")
             auto_healed_nodes.append(cst.parse_statement("import logging"))
             auto_healed_nodes.append(cst.parse_statement("logger = logging.getLogger(__name__)"))
-            missing_deps.remove('logger')
+            missing_deps.discard('logger')
 
         # Handle remaining local siblings (e.g., Product, Contract)
         if missing_deps:
             # Figure out the absolute python module path of the OLD file
             old_module = file_to_module(source_file, base_dir)
-            
+
             dep_names = ", ".join(sorted(missing_deps))
             logger.info(f"Auto-healing internal links from {old_module}: {dep_names}")
-            
+
             # Generate the CST Node for the import
             auto_import_stmt = f"from {old_module} import {dep_names}"
             auto_healed_nodes.append(cst.parse_statement(auto_import_stmt))
 
-    # 4. Construct the new file AST
+    # 5. Construct the new file AST
     empty_line = cst.EmptyLine()
-    processed_imports = process_imports(transformer.harvested_imports, required_deps)
-    new_body = processed_imports + auto_healed_nodes + [empty_line, empty_line, transformer.extracted_node]
+    harvested_nodes = [cst.parse_statement(s) for s in harvested_import_strings]
+    new_body = harvested_nodes + auto_healed_nodes + [empty_line, empty_line, transformer.extracted_node]
     new_module = cst.Module(body=new_body)
 
-    # 5. Save the files
+    # 6. Save the files
     dest_dir = os.path.dirname(dest_file)
     if dest_dir and not os.path.exists(dest_dir):
         os.makedirs(dest_dir)

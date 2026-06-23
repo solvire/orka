@@ -41,7 +41,7 @@ from typing_extensions import TypedDict
 from orka.clients import OrkaLangChainClient
 from orka.config import settings
 from orka.core.compiler import PromptCompiler
-from orka.core.import_fixer import resolve_import
+from orka.core.import_injector import resolve_import_for_test as resolve_import
 from orka.core.ingester import OrkaGraphDB
 from orka.core.rule_resolver import resolve_rules
 from orka.core.templates import InjectionPoint, PromptTemplate

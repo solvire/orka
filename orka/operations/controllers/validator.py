@@ -5,7 +5,7 @@ Performs four stages of validation:
 
 1. **Gate 1 (Snippet AST)** — Validate ``draft_snippet`` via ``ast.parse``.
 2. **Assembly** — Patch the snippet into the full file (LibCST for refactor,
-   import_fixer + assembly for testgen).
+   import_injector + assembly for testgen).
 3. **Gate 2 (File AST)** — Validate the assembled ``draft_file_content``.
 4. **Disk Write + Pytest** — Write to real path, run pytest, truncate output.
 
@@ -20,14 +20,11 @@ import subprocess
 import sys
 from typing import Any, Optional
 
-import libcst as cst
-
 from orka.config import settings
-from orka.core.import_fixer import auto_import, resolve_import
+from orka.core.import_injector import auto_import, extract_imports, resolve_import_for_test as resolve_import
 from orka.core.validator import validate_code_snippet
 from orka.operations.graph_helpers import get_graph_db
 from orka.operations.helpers import extract_error_summary, truncate_error_summary
-from orka.surgery.modifier import SnippetImportExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +207,7 @@ def _assemble_test_file(
     Uses the deterministic ``resolve_import`` (no LLM involved).
 
     Before assembling the final file, the snippet is passed through
-    ``SnippetImportExtractor`` (CST-based) to strip any import statements
+    ``extract_imports`` (CST-based) to strip any import statements
     that the LLM may have erroneously included.  This prevents duplicate
     imports in the output.
     """
@@ -249,13 +246,10 @@ def _assemble_test_file(
 
     # ── Strip import statements from LLM snippet ──────────────────────
     # The LLM sometimes emits import statements inside the snippet despite
-    # being instructed not to.  Use SnippetImportExtractor (CST-based) to
+    # being instructed not to.  Use ``extract_imports`` (CST-based) to
     # remove them cleanly — handles edge cases like ``import os; x = 1``.
     try:
-        tree = cst.parse_module(snippet)
-        extractor = SnippetImportExtractor()
-        clean_tree = tree.visit(extractor)
-        clean_snippet = clean_tree.code
+        clean_snippet, _ = extract_imports(snippet)
     except Exception:
         clean_snippet = snippet  # fallback — keep snippet as-is
 

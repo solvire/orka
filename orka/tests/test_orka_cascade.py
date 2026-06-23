@@ -2,7 +2,7 @@ import os
 import textwrap
 import pytest
 
-from orka.core.cascade import cascade_import_updates
+from orka.core.import_injector import cascade_import_updates
 from orka.core.ingester import OrkaGraphDB
 
 @pytest.fixture
