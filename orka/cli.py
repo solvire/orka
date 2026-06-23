@@ -25,6 +25,7 @@ from typing import Any, Optional
 
 import typer
 from rich.console import Console
+from rich.panel import Panel
 
 from orka.clients import OrkaClientFactory
 from orka.config import settings
@@ -288,6 +289,22 @@ def refactor(
         provider=provider,
     )
 
+    # ── Record feedback for self-hardening ────────────────────────────
+    try:
+        from orka.core.feedback import record_feedback
+        record_feedback(
+            operation="refactor",
+            method=method,
+            file=file,
+            success=result.get("is_valid", False),
+            iterations=result.get("iteration_count", 0),
+            gates_passed=4 if result.get("is_valid") else 0,
+            dry_run=dry_run,
+            error=result.get("validation_output") if not result.get("is_valid") else None,
+        )
+    except Exception:
+        pass  # feedback is best-effort, never blocks the pipeline
+
     if result.get("is_valid", False):
         if use_json:
             _emit_json({
@@ -481,6 +498,22 @@ def testgen(
             if not dry_run:
                 err = result.get("validation_output", "unknown error")
                 console.print(f"  [yellow]Iteration {i+1} failed: {err[:80]}[/yellow]")
+
+        # ── Record feedback for self-hardening ────────────────────────
+        try:
+            from orka.core.feedback import record_feedback
+            record_feedback(
+                operation="test",
+                method=method,
+                file=file,
+                success=result.get("is_valid", False),
+                iterations=result.get("iteration_count", 0),
+                gates_passed=4 if result.get("is_valid") else 0,
+                dry_run=dry_run,
+                error=result.get("validation_output") if not result.get("is_valid") else None,
+            )
+        except Exception:
+            pass  # feedback is best-effort
 
     if count > 1 and not output:
         # No output path — concatenate all generated tests to stdout
@@ -786,6 +819,91 @@ def doctor(
                     f"  [bold red]✗[/bold red] {prov:20s} "
                     f"[dim]{result['error'][:60]}[/dim]"
                 )
+
+
+# ---------------------------------------------------------------------------
+# mcp command — start MCP server for IDE tool integration
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def mcp() -> None:
+    """Start the MCP server (stdio transport) for IDE tool integration.
+
+    Configure in your IDE's MCP settings, e.g. for Kilo::
+
+        "mcp": {
+            "orka": {
+                "type": "local",
+                "command": ["env/bin/python", "-m", "orka.mcp.server"],
+                "enabled": true
+            }
+        }
+
+    The server exposes orka_scan, orka_inspect, orka_refactor, orka_testgen,
+    orka_extract, and orka_doctor as MCP tools with structured JSON schemas.
+    """
+    import asyncio
+
+    from orka.mcp.server import main as mcp_main
+
+    asyncio.run(mcp_main())
+
+
+# ---------------------------------------------------------------------------
+# feedback command — view collected surgery feedback for upgrades
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def feedback(
+    json_output: bool = typer.Option(False, "--json", help="Output structured JSON"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Max entries to show"),
+) -> None:
+    """View feedback collected from surgery runs for upgrade insights.
+
+    Every orka refactor/testgen run logs edge cases, fix-loop iterations,
+    and validation failures to .orka/feedback.json. This command surfaces
+    patterns that indicate where orka needs improvement.
+    """
+    from orka.core.feedback import load_feedback, summarize_feedback
+
+    entries = load_feedback()
+    if not entries:
+        console.print("[dim]No feedback collected yet. Run orka refactor or orka testgen first.[/dim]")
+        return
+
+    summary = summarize_feedback(entries[:limit])
+
+    if json_output:
+        _emit_json({"summary": summary, "entries": entries[:limit]})
+        return
+
+    console.print(Panel.fit("[bold cyan]Orka Surgery Feedback[/bold cyan]", border_style="cyan"))
+    console.print()
+
+    console.print(f"[bold]Total runs:[/bold] {summary['total_runs']}")
+    console.print(f"[bold]First-try success:[/bold] {summary['first_try_success']} ({summary['first_try_rate']:.0%})")
+    console.print(f"[bold]Avg iterations:[/bold] {summary['avg_iterations']:.1f}")
+    console.print(f"[bold]Rollbacks:[/bold] {summary['rollbacks']}")
+    console.print()
+
+    if summary["common_failures"]:
+        console.print("[bold yellow]Common failure patterns:[/bold yellow]")
+        for pattern, count in summary["common_failures"].items():
+            console.print(f"  {count}x — {pattern}")
+        console.print()
+
+    if summary["edge_cases"]:
+        console.print("[bold]Edge cases logged:[/bold]")
+        for entry in summary["edge_cases"][:10]:
+            console.print(
+                f"  [{entry['timestamp'][:19]}] "
+                f"{entry['operation']}/{entry['method']} — "
+                f"iter={entry['iterations']} "
+                f"{'✓' if entry['success'] else '✗'} "
+                f"{entry.get('note', '')}"
+            )
 
 
 # ---------------------------------------------------------------------------

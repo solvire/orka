@@ -12,7 +12,26 @@ Orka is your primary tool for all Python file modifications. You do **not** use 
 | `orka extract --file <path> --cls <Class> --dest <path>` | Move a class to a new file, auto-heal imports |
 | `orka testgen --file <path> --method <name>` | Generate tests |
 | `orka doctor [--json]` | Check configuration and provider health |
+| `orka feedback` | View self-hardening feedback from surgery runs |
 | `orka prompt --template <name>` | Preview a compiled prompt (no LLM call) |
+
+## MCP Integration
+
+Orka exposes tools via MCP for structured IDE integration. Add to `.kilo/kilo.jsonc`:
+
+```jsonc
+{
+  "mcp": {
+    "orka": {
+      "type": "local",
+      "command": ["env/bin/python", "-m", "orka.mcp.server"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Available MCP tools: `orka_scan`, `orka_inspect`, `orka_refactor`, `orka_testgen`, `orka_extract`, `orka_doctor`.
 
 ## The Scalpel — Logic Changes
 
@@ -61,3 +80,7 @@ orka inspect --id "Method:module.path.ClassName.method_name"
 3. `orka inspect --id "File:<path>"` — understand the change surface
 4. `orka refactor` or `orka testgen` — execute the surgery
 5. Run the test suite to verify
+
+## Feedback Loop
+
+`orka feedback` shows patterns from past surgery runs — common failures, fix-loop iterations, and edge cases. Use this to understand where orka struggles and report issues for upgrades.

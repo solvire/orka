@@ -22,6 +22,7 @@ dependencies = [
     "together>=1.1",
     "langchain-openai>=0.1",
     "langchain-core>=0.2",
+    "mcp>=1.0",
 ]
 
 [project.scripts]

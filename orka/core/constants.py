@@ -95,25 +95,53 @@ are accessed via the ``openai_compat`` provider but have their own keys.
 # ===================================================================
 
 EDITOR_REGISTRY: dict[str, dict[str, str]] = {
-    "continue-dev": {
-        "display_name": "Continue.dev",
-        "rule_path": ".continue/rules/orka-orchestrator.mdc",
-        "template_path": "docs/templates/continue-rule.mdc",
-    },
-    "cursor": {
-        "display_name": "Cursor",
-        "rule_path": ".cursor/rules/orka-orchestrator.mdc",
-        "template_path": "docs/templates/continue-rule.mdc",
-    },
-    "claude-code": {
-        "display_name": "Claude Code",
-        "rule_path": ".claude/rules/CLAUDE.md",
-        "template_path": "docs/templates/continue-rule.mdc",
-    },
     "kilo": {
         "display_name": "Kilo",
         "rule_path": ".kilorules",
         "template_path": "docs/templates/kilo-rule.md",
+        "mcp_config": "kilo",
+    },
+    "cursor": {
+        "display_name": "Cursor",
+        "rule_path": ".cursor/rules/orka.mdc",
+        "template_path": "docs/templates/cursor-rule.mdc",
+        "mcp_config": "cursor",
+    },
+    "claude-code": {
+        "display_name": "Claude Code",
+        "rule_path": ".claude/rules/orka.md",
+        "template_path": "docs/templates/claude-code-rule.md",
+        "mcp_config": "claude",
+    },
+    "continue": {
+        "display_name": "Continue.dev",
+        "rule_path": ".continue/rules/orka.mdc",
+        "template_path": "docs/templates/continue-rule.mdc",
+        "mcp_config": "continue",
+    },
+    "windsurf": {
+        "display_name": "Windsurf",
+        "rule_path": ".windsurf/rules/orka.md",
+        "template_path": "docs/templates/windsurf-rule.md",
+        "mcp_config": "windsurf",
+    },
+    "cline": {
+        "display_name": "Cline",
+        "rule_path": ".clinerules/orka.md",
+        "template_path": "docs/templates/cline-rule.md",
+        "mcp_config": "cline",
+    },
+    "copilot": {
+        "display_name": "GitHub Copilot",
+        "rule_path": ".github/copilot-instructions.md",
+        "template_path": "docs/templates/copilot-rule.md",
+        "mcp_config": "copilot",
+    },
+    "aider": {
+        "display_name": "Aider",
+        "rule_path": ".aider.conf.yml",
+        "template_path": "docs/templates/aider-rule.md",
+        "mcp_config": "aider",
     },
 }
 """Editor slug → config dict (display_name, rule_path, template_path).

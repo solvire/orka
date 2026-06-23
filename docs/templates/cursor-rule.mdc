@@ -1,0 +1,74 @@
+---
+description: Orka CLI — AI-powered semantic code surgery (refactor, testgen, extract, scan, inspect)
+globs: "*.py"
+alwaysApply: false
+---
+
+# Orka — AI-Powered Semantic Code Surgery
+
+Orka is installed as an editable pip package in this project's virtual environment (`env/`).
+
+## When to Use Orka vs Direct Edit
+
+| Scenario | Use |
+|----------|-----|
+| Refactoring a method body (10+ lines) | Orka |
+| Extracting a class to a new file | Orka |
+| Generating tests for a method | Orka |
+| Understanding dependencies before a change | Orka inspect |
+| Tiny fix (1-3 lines, typo, log level) | Direct edit |
+| Scaffolding a brand-new file | Direct edit |
+
+## Commands
+
+```bash
+# Scan the codebase (run first, or after major changes)
+orka scan
+
+# Inspect dependencies
+orka inspect --id "File:src/app.py"
+orka inspect --id "Class:myproject.models.User"
+orka inspect --id "Method:module.Class.method"
+
+# Refactor a method (AST-safe, preserves signatures)
+orka refactor --file src/app.py --cls MyService --method handle_order --req "add validation"
+orka refactor --file src/app.py --method standalone_func --req "add error handling"
+orka refactor --file src/app.py --method foo --req "..." --dry-run  # preview
+
+# Generate tests
+orka testgen --file src/app.py --method process --output tests/test_process.py --run
+orka testgen --file src/app.py --method process --n 3 --output tests/test_process.py  # 3 tests
+
+# Extract a class (auto-heals imports across project)
+orka extract --file src/utils.py --cls OldClass --dest src/models/old_class.py
+
+# Check health
+orka doctor
+
+# View feedback (self-hardening insights)
+orka feedback
+```
+
+## MCP Integration
+
+Orka exposes tools via MCP for structured IDE integration. Add to your MCP config:
+
+```json
+{
+  "orka": {
+    "type": "local",
+    "command": ["env/bin/python", "-m", "orka.mcp.server"],
+    "enabled": true
+  }
+}
+```
+
+Available MCP tools: `orka_scan`, `orka_inspect`, `orka_refactor`, `orka_testgen`, `orka_extract`, `orka_doctor`.
+
+## Architecture
+
+- **4-Gate Validation**: Every LLM output passes snippet AST → assembly → file AST → pytest before disk
+- **LibCST Surgery**: Preserves signatures, decorators, formatting — no string replacement
+- **Dependency Graph**: NetworkX graph of all files, classes, methods, imports
+- **Semantic Search**: ChromaDB vector search for similar code examples
+- **Fix Loop**: Failed validations trigger LLM repair (up to 3 iterations) with rollback on failure
