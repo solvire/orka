@@ -8,6 +8,7 @@ import libcst.matchers as m
 from collections import defaultdict
 
 from orka.surgery.analyzer import analyze_code_block
+from orka.core.module_resolver import file_to_module
 
 logger = logging.getLogger("Transplanter")
 
@@ -162,8 +163,7 @@ def transplant_class(source_file: str, target_class: str, dest_file: str, base_d
         # Handle remaining local siblings (e.g., Product, Contract)
         if missing_deps:
             # Figure out the absolute python module path of the OLD file
-            rel_path = os.path.relpath(source_file, base_dir)
-            old_module = os.path.splitext(rel_path)[0].replace(os.sep, ".")
+            old_module = file_to_module(source_file, base_dir)
             
             dep_names = ", ".join(sorted(missing_deps))
             logger.info(f"Auto-healing internal links from {old_module}: {dep_names}")
